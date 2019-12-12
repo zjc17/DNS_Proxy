@@ -1,7 +1,8 @@
-#!./venv python3
+#!python3
 # -*- coding: utf-8 -*-
 '''
 管理 TUN interface, 需要管理员权限
+可用 sudo -s 获取临时权限并不切换 bash 及 venv
 '''
 
 from tuntap import TunTap
