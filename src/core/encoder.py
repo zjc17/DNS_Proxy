@@ -1,7 +1,7 @@
 #!.venv/bin/active python
 # -*- coding: utf-8 -*-
 '''
-向 TUN interface 写入数据
+生成伪装DNS数据包
 '''
 
 
