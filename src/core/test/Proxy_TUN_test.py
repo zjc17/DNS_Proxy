@@ -1,7 +1,7 @@
 import pytest
 
 import sys 
-sys.path.append("..") 
+sys.path.append("../.") 
 from src.core.Proxy_TUN import TUN
 
 def test_placeholder():
