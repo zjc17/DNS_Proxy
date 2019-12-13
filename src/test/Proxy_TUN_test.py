@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-from test import *
+import test.__init__
 
 
 from core.Proxy_TUN import TUN
