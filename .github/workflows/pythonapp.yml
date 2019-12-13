@@ -29,6 +29,7 @@ jobs:
         pip install pytest
         PATH_pytest=$(which pytest)
         echo PATH_pytest = $PATH_pytest
+        echo sudo PATH of python = $(which python)
     - name: Test with pytest
       run: |
-        sudo $PATH_pytest
+        sudo /opt/hostedtoolcache/Python/3.7.5/x64/bin/pytest
