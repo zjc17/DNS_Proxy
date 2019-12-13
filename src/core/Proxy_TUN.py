@@ -7,6 +7,7 @@
 
 from tuntap import TunTap
 
+
 class TUN:
     def __init__(self, nic_type, nic_name):
         self.__type = nic_type
