@@ -1,4 +1,4 @@
-#!python3
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 from test import *
 from core.Proxy_TUN import TUN
