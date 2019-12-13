@@ -19,7 +19,7 @@ jobs:
         pip install -r requirements.txt
     - name: Modify PYTHONPATH
       run: |
-        export PYTHONPATH=./
+        export PYTHONPATH=./src
     - name: Lint with flake8
       run: |
         pip install flake8
