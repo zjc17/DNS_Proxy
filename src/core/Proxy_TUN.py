@@ -13,10 +13,10 @@ class TUN:
         self.__type = nic_type
         self.__name = nic_name
         self.__TUN = TunTap(nic_type=self.__type, nic_name=self.__name)
-        print("Successfully create the TUN interface", 
-                self.__TUN.name,self.__TUN.ip,self.__TUN.mask)
+        print("Successfully create the TUN interface",
+            self.__TUN.name, self.__TUN.ip, self.__TUN.mask)
 
 
 if __name__ == '__main__':
-    tun = TUN(nic_type="Tun",nic_name="tun0")
+    tun = TUN(nic_type="Tun", nic_name="tun0")
     pass

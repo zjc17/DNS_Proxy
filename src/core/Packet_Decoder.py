@@ -4,6 +4,5 @@
 从 TUN interface 读取数据包并进行判断
 '''
 
-if __name__ == 'main':
-    
+if __name__ == '__main__':
     pass
