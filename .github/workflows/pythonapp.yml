@@ -33,3 +33,5 @@ jobs:
     - name: Test with pytest
       run: |
         sudo /opt/hostedtoolcache/Python/3.7.5/x64/bin/pytest
+        sudo $(which pytest)
+        sudo $PATH_pytest
