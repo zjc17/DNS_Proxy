@@ -13,7 +13,7 @@ jobs:
     - name: get sudo permission
       run: |
         sudo -s
-        echo "Got sudo Permission"
+        sudo echo "Got sudo Permission"
     - name: Set up Python 3.7
       uses: actions/setup-python@v1
       with:
@@ -32,4 +32,4 @@ jobs:
     - name: Test with pytest
       run: |
         pip install pytest
-        pytest
+        sudo pytest
