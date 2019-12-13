@@ -28,7 +28,7 @@ jobs:
       run: |
         pip install pytest
         PATH_pytest=$(which pytest)
-        $(which pytest)
+        echo PATH_pytest = $PATH_pytest
     - name: Test with pytest
       run: |
         sudo $PATH_pytest
