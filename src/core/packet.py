@@ -41,3 +41,11 @@ class IPPacket:
         获取IP目标地址
         '''
         return data[16:20]
+
+    @staticmethod
+    def str_info(data):
+        '''
+        打印关键信息
+        '''
+        l = list(map(int, data[12:20]))
+        return "IP packet from %d.%d.%d.%d to %d.%d.%d.%d"%(l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7])
