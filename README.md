@@ -38,4 +38,6 @@
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
 
-2. RFC1035: [Reference](https://tools.ietf.org/html/rfc1035)
+2. DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION: [RFC1035](https://tools.ietf.org/html/rfc1035)
+
+3. INTERNET PROTOCOL: [RFC791](https://tools.ietf.org/html/rfc791)
