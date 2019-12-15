@@ -4,6 +4,6 @@
     "python.linting.pylintEnabled": true,
     "python.linting.pylintArgs": [
         "--disable=E0611",
-        "--disable=W,C"
+        // "--disable=W,C"
     ]
 }
