@@ -8,6 +8,8 @@ from ipaddress import ip_network
 from threading import Thread
 from select import select
 from core.packet import IPPacket
+from dnslib import DNSRecord
+from dnslib.dns import DNSError
 import struct
 import os
 import time
@@ -173,6 +175,20 @@ class Server:
                     # 接收端转发后接受的回应
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
                     logging.info('from (%s:%s)' % addr)
+                    print('data:', data)
+                    if len(data) >= 20:
+                        logging.info(IPPacket.str_info(data))
+                    try:
+                        d = DNSRecord()
+                        d.parse(data)
+                        print('=========================\n', d)
+                    except DNSError:
+                        print('Not a DNS Record')
+                        pass
+                    ##
+                    udp_packet = IPPacket.get_next_layer(data)
+                    print('UDP packet:', udp_packet)
+                    ##
                     try:
                         tunfd = self.__tun_from_addr(addr)
                         try:
