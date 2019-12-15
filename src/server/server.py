@@ -42,7 +42,7 @@ def start_tunnel(tun_name, peer_ip):
     os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
              (tun_name, LOCAL_IP, peer_ip, MTU)).read()
 
-class Receiver:
+class Server:
     '''
     模拟接受端
     '''
@@ -107,7 +107,7 @@ class Receiver:
         for i in self.sessions:
             if i['tunfd'] == tunfd:
                 self.sessions.remove(i)
-                IPRANGE.append(i['tunAddr'])
+                IPRANGE.append(i['tun_addr'])
         self.readables.remove(tunfd)
         os.close(tunfd)
         return True
@@ -126,7 +126,7 @@ class Receiver:
         '''
         while True:
             for i in self.sessions:
-                if (time.time() - i['lastTime']) > 60:
+                if (time.time() - i['last_time']) > 60:
                     self.del_session_by_tun(i['tunfd'])
                     if DEBUG:
                         print('Session: %s:%s expired!' % i['addr'])
@@ -136,7 +136,22 @@ class Receiver:
         '''
         TODO: 用户身份认证
         '''
-        raise NotImplementedError()
+        if data == b'\x00':
+            if tunfd == -1:
+                self.__socket.sendto(b'r', addr)
+            else:
+                self.update_last_time(tunfd)
+            return False
+        if data == b'e':
+            if self.del_session_by_tun(tunfd):
+                if DEBUG:
+                    print("Client %s:%s is disconnect" % addr)
+            return False
+        if data == PASSWORD:
+            return True
+        if DEBUG:
+            print('Clinet %s:%s connect failed' % addr)
+        return False
 
     def run_forever(self):
         '''
@@ -152,7 +167,7 @@ class Receiver:
                     # 接收端转发后接受的回应
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
                     if DEBUG:
-                        print(time.time() +'from (%s:%s)' % addr, data[:10])
+                        print(time.time(), 'from (%s:%s)' % addr, data[:10])
                     try:
                         tunfd = self.__tun_from_addr(addr)
                         try:
@@ -178,7 +193,8 @@ class Receiver:
                         continue
 
 if __name__ == '__main__':
-    SERVER_ADDR = '47.100.92.248'
-    RECEIVER = Receiver()
-    # while True:
-        # print(recerver.recvfrom)
+    SERVER = Server()
+    try:
+        SERVER.run_forever()
+    except KeyboardInterrupt:
+        print('Closing vpn server ...')
