@@ -118,45 +118,28 @@ def test_read():
     assert res[0]
 
 
-def ___test_write():
-    '''
-    测试向 TUN 接口写入 packet
-    '''
-    def __send_msg(tun0):
-        time.sleep(0.5)
-        tun0.write(b'E\x00\x00T\r\xb0@\x00@\x01\x04\xe3\n\n\n\x01\n\n\n\x02\x08\x00R\x04\x0e\xc0\x00\x01\xd2\xfc\xf4]\x00\x00\x00\x00\x04\r\r\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567')
+# def ___test_write():
+#     '''
+#     测试向 TUN 接口写入 packet
+#     '''
+#     def __send_msg(tun0):
+#         time.sleep(0.5)
+#         tun0.write(b'E\x00\x00T\r\xb0@\x00@\x01\x04\xe3\n\n\n\x01\n\n\n\x02\x08\x00R\x04\x0e\xc0\x00\x01\xd2\xfc\xf4]\x00\x00\x00\x00\x04\r\r\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567')
 
-    tun_ip = '10.10.10.1'
-    tun0 = TunTap(nic_type="Tun", nic_name="tun0")
-    tun0.config(ip=tun_ip, mask='255.255.255.0')
-    t_1 = threading.Thread(target=__send_msg, args=(tun0, ), daemon=True)
-    t_1.start()
-    try:
-        while True:
-            data = tun0.read()
-            print(data)
-            print(IPPacket.str_info(data))
+#     tun_ip = '10.10.10.1'
+#     tun0 = TunTap(nic_type="Tun", nic_name="tun0")
+#     tun0.config(ip=tun_ip, mask='255.255.255.0')
+#     t_1 = threading.Thread(target=__send_msg, args=(tun0, ), daemon=True)
+#     t_1.start()
+#     try:
+#         while True:
+#             data = tun0.read()
+#             print(data)
+#             print(IPPacket.str_info(data))
             
-    except:
-        tun0.close()
+#     except:
+#         tun0.close()
 
 
 if __name__ == '__main__':
-    # while True:
-    # test_write()
-    # tun0 = TunTap(nic_type="Tun", nic_name="tun0")
-    # tun0.config(ip = tun_ip, mask = '255.255.255.0')
-    tun_ip = '10.10.10.1'
-    tun0 = TunTap(nic_type="Tun", nic_name="tun0")
-    tun0.config(ip='14.215.177.39', mask='255.255.255.0')
-# try:
-    # client = Client('127.0.0.10', 8080)
-    # client.sendto(b'Hello', ('10.10.10.2', 8080))
-    print('tun0 recv:', tun0.read())
-    msg, addr = client.recvfrom()
-    print('recver:', msg, addr)
-# except Exception as e:
-    print(repr(e))
-    print(str(e))
-    
-    tun0.close()
+    pass
