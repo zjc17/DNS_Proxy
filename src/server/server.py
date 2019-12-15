@@ -7,14 +7,18 @@ from fcntl import ioctl
 from ipaddress import ip_network
 from threading import Thread
 from select import select
+from core.packet import IPPacket
 import struct
 import os
 import time
-
+import logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S')
 DEBUG = True
 PASSWORD = b'4fb88ca224e'
 
-BIND_ADDRESS = '0.0.0.0', 8080
+BIND_ADDRESS = '0.0.0.0', 53
 NETWORK = '10.0.0.0/24'
 BUFFER_SIZE = 4096
 MTU = 1400
@@ -26,14 +30,17 @@ TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
 
+
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
     创建隧道
     '''
     tunfd = os.open("/dev/net/tun", os.O_RDWR)
-    ifn = ioctl(tunfd, TUNSETIFF, struct.pack(b"16sH", tun_name.encode(), tun_mode))
+    ifn = ioctl(tunfd, TUNSETIFF, struct.pack(
+        b"16sH", tun_name.encode(), tun_mode))
     tun_name = ifn[:16].decode().strip("\x00")
     return tunfd, tun_name
+
 
 def start_tunnel(tun_name, peer_ip):
     '''
@@ -42,10 +49,12 @@ def start_tunnel(tun_name, peer_ip):
     os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
              (tun_name, LOCAL_IP, peer_ip, MTU)).read()
 
+
 class Server:
     '''
     模拟接受端
     '''
+
     def __init__(self):
         '''
         初始化接受端
@@ -54,8 +63,8 @@ class Server:
         self.__socket.bind(BIND_ADDRESS)
         self.readables = [self.__socket]
         self.sessions = []
-        self.tun_info = {'tun_name':None, 'tunfd':None, 'addr':None,
-                         'tun_addr':None, 'last_time':None}
+        self.tun_info = {'tun_name': None, 'tunfd': None, 'addr': None,
+                         'tun_addr': None, 'last_time': None}
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
     def recvfrom(self):
@@ -92,8 +101,8 @@ class Server:
         tun_addr = IPRANGE.pop(0)
         start_tunnel(tun_name, tun_addr)
         self.sessions.append(
-            {'tun_name':tun_name, 'tunfd':tunfd, 'addr':addr,
-             'tun_addr':tun_addr, 'last_time':time.time()})
+            {'tun_name': tun_name, 'tunfd': tunfd, 'addr': addr,
+             'tun_addr': tun_addr, 'last_time': time.time()})
         self.readables.append(tunfd)
         reply = '%s;%s' % (tun_addr, LOCAL_IP)
         self.__socket.sendto(reply.encode(), addr)
@@ -128,8 +137,7 @@ class Server:
             for i in self.sessions:
                 if (time.time() - i['last_time']) > 60:
                     self.del_session_by_tun(i['tunfd'])
-                    if DEBUG:
-                        print('Session: %s:%s expired!' % i['addr'])
+                    logging.debug('Session: %s:%s expired!' % i['addr'])
             time.sleep(1)
 
     def auth(self, addr, data, tunfd):
@@ -138,19 +146,17 @@ class Server:
         '''
         if data == b'\x00':
             if tunfd == -1:
-                self.__socket.sendto(b'r', addr)
+                self.__socket.sendto(b'r', (addr))
             else:
                 self.update_last_time(tunfd)
             return False
         if data == b'e':
             if self.del_session_by_tun(tunfd):
-                if DEBUG:
-                    print("Client %s:%s is disconnect" % addr)
+                logging.debug("Client %s:%s is disconnect" % (addr))
             return False
         if data == PASSWORD:
             return True
-        if DEBUG:
-            print('Clinet %s:%s connect failed' % addr)
+        logging.debug('Clinet %s:%s connect failed' % (addr))
         return False
 
     def run_forever(self):
@@ -166,8 +172,7 @@ class Server:
                 if _r == self.__socket:
                     # 接收端转发后接受的回应
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
-                    if DEBUG:
-                        print(time.time(), 'from (%s:%s)' % addr, data[:10])
+                    logging.info('from (%s:%s)' % addr)
                     try:
                         tunfd = self.__tun_from_addr(addr)
                         try:
@@ -177,8 +182,7 @@ class Server:
                             if not self.auth(addr, data, tunfd):
                                 continue
                             self.create_session(addr)
-                            if DEBUG:
-                                print('Clinet %s:%s connect successful' % addr)
+                            logging.info('Clinet %s:%s connect successful' % addr)
                     except OSError:
                         continue
                 else:
@@ -186,11 +190,11 @@ class Server:
                         addr = self.__addr_from_tun(_r)
                         data = os.read(_r, BUFFER_SIZE)
                         self.__socket.sendto(data, addr)
-                        if DEBUG:
-                            print(time.time() +'to (%s:%s)' % addr, data[:10])
+                        logging.debug('To (%s:%s)' % addr)
                     except Exception as _e:
                         print(repr(_e))
                         continue
+
 
 if __name__ == '__main__':
     SERVER = Server()
