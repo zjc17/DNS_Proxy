@@ -118,7 +118,7 @@ def test_read():
     assert res[0]
 
 
-def test_write():
+def ___test_write():
     '''
     测试向 TUN 接口写入 packet
     '''
