@@ -79,8 +79,24 @@ class IPPacket:
         '''
         print('len:', IPPacket.get_header_length(data)*4)
         return data[IPPacket.get_header_length(data)*4:]
-
     
+    @staticmethod
+    def check_packet(data):
+        '''
+        计算校验和是否正确
+        '''
+        _len = IPPacket.get_header_length(data) * 4
+        _num = struct.unpack('>%dH'%(_len//2), data)
+        _sum = sum(_num)
+        # print(struct.pack('>h', 65534))
+        print('checksum for IP', _sum)
+        # print('2:', 0x0000ffff^)
+        print('1:', (0x0000ffff&_sum)+(_sum>>16))
+        print('2:', (0x0000ffff&(0x0000ffff&_sum)+(_sum>>16)+1))
+        print('3:', (0x0000ffff^(0x0000ffff&_sum)+(_sum>>16)))
+        print(sum(_num))
+        return struct.unpack('>H', data[4:6])[0]
+
 
 class UDPPacket:
     '''
@@ -104,21 +120,18 @@ class UDPPacket:
         '''
         返回端口信息(src_port, dst_port)
         '''
-        return struct.unpack('HH', data[:4])
+        return struct.unpack('>HH', data[:4])
         
-
+    @staticmethod
+    def get_length(data):
+        '''
+        返回UDP包的长度，单位：bytes
+        Length  is the length  in octets  of this user datagram  including  this
+        header  and the data.   (This  means  the minimum value of the length is
+        eight.)
+        '''
+        return struct.unpack('>H', data[4:6])[0]
 
 
 if __name__ == '__main__':
-    d = DNSRecord()
-    DATA = b'\x8eQ\x01 \x00\x01\x00\x00\x00\x00\x00\x01\x03www\x07zhangjc\x04site\x00\x00\x01\x00\x01\x00\x00)\x10\x00\x00\x00\x00\x00\x00\x0c\x00\n\x00\x08$4v\x18i\xe2\xd3\x0f'
-    d.parse(DATA)
-    print(d)
-    print(IPPacket.str_info(DATA))
-    UDPDATA = IPPacket.get_next_layer(DATA)
-    UDPDATA = DATA
-    print('UDP data:', UDPDATA)
-    print(bytes_to_hexstring(UDPDATA))
-    print(UDPPacket.get_port(UDPDATA))
-    print(UDPDATA[2:4])
-    print(bytes_to_hexstring(UDPDATA[2:4]))
+    pass
