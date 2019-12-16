@@ -13,6 +13,10 @@ import socket
 from fcntl import ioctl
 from select import select
 from threading import Thread
+from core.packet import IPPacket, UDPPacket
+from dnslib import DNSRecord
+from dnslib.dns import DNSError
+
 
 PASSWORD = b'4fb88ca224e'
 
@@ -68,6 +72,8 @@ class Client():
     def keep_alive(self):
         '''
         子线程保持向服务端发送心跳包，以防止服务端清除会话断开隧道连接
+        TODO: 修改心跳包发送方式
+            - DNS查询
         '''
         def _keepalive(udp, dst_addr):
             while True:
@@ -131,7 +137,7 @@ class Client():
 
 if __name__ == '__main__':
     try:
-        SERVER_ADDRESS = ('47.100.92.248', 8080)
+        SERVER_ADDRESS = ('47.100.92.248', 53)
         Client().run_forever()
     except IndexError:
         print('Usage: %s [remote_ip] [remote_port]' % sys.argv[0])
