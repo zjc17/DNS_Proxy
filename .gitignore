@@ -1,4 +1,5 @@
 venv/*
+bin/DNS_Proxy.pth
 # python
 *.py[cod]
 

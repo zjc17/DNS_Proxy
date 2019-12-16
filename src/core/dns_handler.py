@@ -3,6 +3,7 @@ DNS 相关操作
 '''
 from dnslib import (DNSRecord, DNSHeader, QTYPE, RR,
                     A, MX, TXT, CNAME)
+import logging
 
 
 def make_response(data):
@@ -21,5 +22,16 @@ def make_response(data):
         reply.add_answer(RR(qname, qtype, rdata=MX('1.2.3.4')))
     else:
         reply.add_answer(RR(qname, QTYPE.CNAME, rdata=CNAME('CNAME RECORE')))
-    print(reply)
+    logging.debug(reply)
+    return reply.pack()
+
+def make_txt_response(data, txt_record):
+    '''
+    返回TXT记录，用于登录
+    '''
+    request = DNSRecord.parse(data)
+    qname = request.q.qname
+    qtype = request.q.qtype
+    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
+    reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
     return reply.pack()
