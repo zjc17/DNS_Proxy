@@ -34,6 +34,14 @@
 
         - `ip tuntap help`
 
+5. 关于服务端 `53` 端口占用:
+    
+    - 查看: `sudo lsof -i:53`
+
+    - 关闭: `sudo systemctl stop systemd-resolved`
+
+    - 启动: `sudo systemctl start systemd-resolved`
+
 工具
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
