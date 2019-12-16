@@ -7,27 +7,26 @@ from fcntl import ioctl
 from ipaddress import ip_network
 from threading import Thread
 from select import select
-from core.packet import IPPacket
-from dnslib import DNSRecord
-from dnslib.dns import DNSError
 import struct
 import os
 import time
 import logging
+from dnslib import DNSRecord
+from dnslib.dns import DNSError
+from core import dns_handler
+
+# TODO: [优化logging模块的使用](https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
-DEBUG = True
-PASSWORD = b'4fb88ca224e'
 
-BIND_ADDRESS = '0.0.0.0', 8080
+PASSWORD = b'4fb88ca224e'
+BIND_ADDRESS = '0.0.0.0', 53
 NETWORK = '10.0.0.0/24'
 BUFFER_SIZE = 4096
 MTU = 1400
-
 IPRANGE = list(map(str, ip_network(NETWORK)))[1:]
 LOCAL_IP = IPRANGE.pop(0)
-
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -144,13 +143,13 @@ class Server:
 
     def auth(self, addr, data, tunfd):
         '''
-        TODO: 用户身份认证
+        用户身份认证
         '''
         if data == b'\x00':
-            if tunfd == -1:
-                self.__socket.sendto(b'r', (addr))
-            else:
+            if tunfd != -1:
                 self.update_last_time(tunfd)
+            else:
+                self.__socket.sendto(b'r', (addr))
             return False
         if data == b'e':
             if self.del_session_by_tun(tunfd):
@@ -160,6 +159,15 @@ class Server:
             return True
         logging.debug('Clinet %s:%s connect failed' % (addr))
         return False
+    
+    def __handle_dns_request(self):
+        '''
+        处理绑定53接口的UDP服务器数据
+        - DNS 请求检测
+        - 新会话创建
+        '''
+        return
+
 
     def run_forever(self):
         '''
@@ -171,24 +179,16 @@ class Server:
         while True:
             readab = select(self.readables, [], [], 1)[0]
             for _r in readab:
-                print('=========================\n', d)
+                print('=========================')
                 if _r == self.__socket:
-                    # 接收端转发后接受的回应
+                    # DNS packet
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
-                    logging.info('from (%s:%s)' % addr)
-                    print('data:', data)
-                    if len(data) >= 20:
-                        logging.info(IPPacket.str_info(data))
-                    try:
-                        d = DNSRecord()
-                        d.parse(data)
-                    except DNSError:
-                        print('Not a DNS Record')
-                        pass
-                    ##
-                    udp_packet = IPPacket.get_next_layer(data)
-                    print('UDP packet:', udp_packet)
-                    ##
+                    print(data)
+                    if b'HELLO-WORLD' in data:
+                        logging.info('Usering Connecting')
+                        reply_data = dns_handler.make_response(data)
+                        self.__socket.sendto(reply_data, addr)
+                    logging.info('From (%s:%s)' % addr)
                     try:
                         tunfd = self.__tun_from_addr(addr)
                         try:
@@ -202,14 +202,15 @@ class Server:
                     except OSError:
                         continue
                 else:
-                    try:
-                        addr = self.__addr_from_tun(_r)
-                        data = os.read(_r, BUFFER_SIZE)
-                        self.__socket.sendto(data, addr)
-                        logging.debug('To (%s:%s)' % addr)
-                    except Exception as _e:
-                        print(repr(_e))
-                        continue
+                    # IP packet
+                    # try:
+                    addr = self.__addr_from_tun(_r)
+                    data = os.read(_r, BUFFER_SIZE)
+                    self.__socket.sendto(data, addr)
+                    logging.debug('To (%s:%s)' % addr)
+                    # except Exception as _e:
+                    #     print(repr(_e))
+                    #     continue
 
 
 if __name__ == '__main__':
