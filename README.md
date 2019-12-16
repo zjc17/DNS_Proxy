@@ -42,6 +42,22 @@
 
     - 启动: `sudo systemctl start systemd-resolved`
 
+6. 配置网卡转发:
+
+    1. 查看NAT转发: `sudo iptables -L -n -t nat`
+
+    2. 添加NAT转发:
+
+        - TODO: ...
+
+    3. 删除转发: 
+        
+        - `sudo iptables -t nat -D PREROUTING 1`
+
+        - `sudo iptables -t nat -D POSTROUTING 1`
+
+        - `sudo iptables -D FORWARD 1`
+
 工具
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
@@ -51,3 +67,5 @@
 3. INTERNET PROTOCOL: [RFC791](https://tools.ietf.org/html/rfc791)
 
 4. User Datagram Protocol: [RF768](https://tools.ietf.org/html/rfc768)
+
+5. SOCKS Protocol Version 5: [RCF1928](https://tools.ietf.org/html/rfc1928)
