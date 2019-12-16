@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.DEBUG,
 DEBUG = True
 PASSWORD = b'4fb88ca224e'
 
-BIND_ADDRESS = '0.0.0.0', 53
+BIND_ADDRESS = '0.0.0.0', 8080
 NETWORK = '10.0.0.0/24'
 BUFFER_SIZE = 4096
 MTU = 1400
@@ -171,6 +171,7 @@ class Server:
         while True:
             readab = select(self.readables, [], [], 1)[0]
             for _r in readab:
+                print('=========================\n', d)
                 if _r == self.__socket:
                     # 接收端转发后接受的回应
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
@@ -181,7 +182,6 @@ class Server:
                     try:
                         d = DNSRecord()
                         d.parse(data)
-                        print('=========================\n', d)
                     except DNSError:
                         print('Not a DNS Record')
                         pass
