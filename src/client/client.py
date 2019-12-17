@@ -146,8 +146,8 @@ class Client():
                     data = os.read(tunfd, BUFFER_SIZE)
                     # TODO: 将应用数据发送给代理服务器
                     logging.debug('Get outbounding data from TUN')
-                    data = data[:12] + b'\n\x00\x00\x02\n\x00\x00\x01' + data[20:]
-                    logging.debug('Rewrite data: %s'%IPPacket.str_info(data))
+                    # data = data[:12] + b'\n\x00\x00\x02\n\x00\x00\x01' + data[20:]
+                    # logging.debug('Rewrite data: %s'%IPPacket.str_info(data))
                     request = dns_handler.make_fake_request(HOST_NAME, UUID, data)
                     self.__app.sendto(request, DOMAIN_NS_ADDR)
 
