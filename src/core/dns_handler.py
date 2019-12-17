@@ -40,5 +40,5 @@ def make_txt_response(data, txt_record):
     elif qtype == QTYPE.CNAME:
         reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
         reply.add_answer(RR(qname, qtype, rdata=CNAME('CNAME RECORD HERE')))
-    # print(reply)
+    print(reply)
     return reply.pack()
