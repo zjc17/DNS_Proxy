@@ -12,6 +12,8 @@
 
 3. 添加环境变量 `python setup.py`
 
+4. 解析域名 `dig @120.78.166.34 group11.cs305.fun`
+
 其他说明
 
 1. 由于 TUN 接口需要管理员权限，因此建议在开发前（进入虚拟环境前），使用 `sudo -s` 提升权限。
@@ -62,8 +64,11 @@
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
 
-2. DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION: [RFC1035](https://tools.ietf.org/html/rfc1035)
+2. DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION:
 
+    - [RFC1035](https://tools.ietf.org/html/rfc1035)
+
+    - [DNS Message](http://www-inf.int-evry.fr/~hennequi/CoursDNS/NOTES-COURS_eng/msg.html)
 3. INTERNET PROTOCOL: [RFC791](https://tools.ietf.org/html/rfc791)
 
 4. User Datagram Protocol: [RF768](https://tools.ietf.org/html/rfc768)
