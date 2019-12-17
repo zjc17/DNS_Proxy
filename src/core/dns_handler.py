@@ -30,8 +30,15 @@ def make_txt_response(data, txt_record):
     返回TXT记录，用于登录
     '''
     request = DNSRecord.parse(data)
+    # print('REQUEST:\n', request)
     qname = request.q.qname
     qtype = request.q.qtype
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-    reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
+    if qtype == QTYPE.TXT:
+        reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
+        reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
+        # reply.add_answer(RR(qname, qtype, rdata=TXT('TEST MSG')))
+    elif qtype == QTYPE.CNAME:
+        reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
+        reply.add_answer(RR(qname, qtype, rdata=CNAME('CNAME RECORD HERE')))
+    # print(reply)
     return reply.pack()
