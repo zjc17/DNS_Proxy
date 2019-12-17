@@ -18,7 +18,7 @@ from dnslib import DNSRecord
 from dnslib.dns import DNSError
 
 
-PASSWORD = b'4fb88ca224e'
+UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
 
 MTU = 1400
 BUFFER_SIZE = 4096
@@ -56,7 +56,7 @@ class Client():
     def __init__(self):
         self.__app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__app.settimeout(5)
-        self.__dst_addr = SERVER_ADDRESS
+        # self.__dst_addr = SERVER_ADDRESS
         self.init_local_ip()
 
     def init_local_ip(self):
@@ -88,16 +88,12 @@ class Client():
         '''
         连接服务端并配置代理隧道
         '''
-        self.__app.sendto(PASSWORD, self.__dst_addr)
-        try:
-            data, _addr = self.__app.recvfrom(BUFFER_SIZE)
-            tunfd, tun_name = create_tunnel()
-            local_ip, peer_ip = data.decode().split(';')
-            print('Local ip: %s\tPeer ip: %s' % (local_ip, peer_ip))
-            start_tunnel(tun_name, local_ip, peer_ip)
-            return tunfd
-        except socket.timeout:
-            return False
+        txt_record = get_txt_record(UUID)
+        tunfd, tun_name = create_tunnel()
+        local_ip, peer_ip = txt_record.split(';')
+        print('Local ip: %s\tPeer ip: %s' % (local_ip, peer_ip))
+        start_tunnel(tun_name, local_ip, peer_ip)
+        return tunfd
 
     def run_forever(self):
         '''
@@ -109,7 +105,7 @@ class Client():
             print("Connect failed!")
             sys.exit(0)
         print('Connect to server successful')
-        self.keep_alive()
+        # self.keep_alive()
         readables = [self.__app, tunfd]
         while True:
             try:
@@ -132,12 +128,28 @@ class Client():
                         continue
                 else:
                     data = os.read(tunfd, BUFFER_SIZE)
-                    self.__app.sendto(data, self.__dst_addr)
+                    # TODO: 将应用数据发送给代理服务器
+                    # self.__app.sendto(data, self.__dst_addr)
 
+DOMAIN_NS_IP = '120.78.166.34'
+HOST_NAME = 'group11.cs305.fun'
+
+def get_txt_record(name:str)->str:
+    if name:
+        name += '.'
+    reply = os.popen('dig -t txt @{} {}'.format(DOMAIN_NS_IP, name+HOST_NAME)).read()
+    import re
+    txt_records = re.findall(r'.*TXT.*\"(.*)\".*', reply)
+    print(reply)
+    assert len(txt_records) == 1
+    return txt_records[0]
+    
 
 if __name__ == '__main__':
+    # print(get_txt_record('779ea091-ad7d-43bf-8afc-8b94fdb576bf'))
     try:
-        SERVER_ADDRESS = ('47.100.92.248', 53)
+        # SERVER_ADDRESS = ('47.100.92.248', 53)
+        # SERVER_ADDRESS = ('13.57.9.1', 53)
         Client().run_forever()
     except IndexError:
         print('Usage: %s [remote_ip] [remote_port]' % sys.argv[0])
