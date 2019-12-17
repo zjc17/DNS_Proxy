@@ -11,7 +11,7 @@ import struct
 import os
 import time
 import logging
-from dnslib import DNSRecord
+from dnslib import DNSRecord, DNSHeader, RR, TXT, QTYPE
 from dnslib.dns import DNSError
 from core import dns_handler
 from core.packet import IPPacket
@@ -128,8 +128,12 @@ class Server:
             {'tun_name': tun_name, 'tunfd': tunfd, 'addr': addr,
              'tun_addr': tun_addr, 'last_time': time.time(), 'uuid':uuid})
         self.readables.append(tunfd)
-        reply = dns_handler.make_txt_response(data, '%s;%s'%(tun_addr, LOCAL_IP))
-        self.__socket.sendto(reply, addr)
+        try:
+            reply = dns_handler.make_txt_response(data, '%s;%s'%(tun_addr, LOCAL_IP))
+            self.__socket.sendto(reply, addr)
+        except DNSError:
+            logging.debug('Not a DNS Record or not a Command DNS Packet')
+        
 
     def del_session_by_tun(self, tunfd):
         '''
@@ -214,12 +218,14 @@ class Server:
         elif DATA == b'KEEP_ALIVE':
             # TODO: 
             return
-        try:
-            tunfd = self.__tun_from_uuid(UUID)
+        tunfd = self.__tun_from_uuid(UUID)
+        if len(DATA) >= 20:
+            print(addr)
             try:
                 logging.debug('Try to send DATA(%d) to TUN'%(len(DATA)))
                 print(IPPacket.str_info(DATA))
-                os.write(tunfd, data)
+                print(type(DATA))
+                os.write(tunfd, DATA)
             except OSError:
                 # 新会话请求
                 # if not self.auth(addr, data, tunfd):
@@ -227,8 +233,23 @@ class Server:
                 logging.info('Fail to write DATA to TUN')
                 self.create_session(addr, data, UUID)
                 logging.info('Clinet %s:%s connect successful' % addr)
-        except OSError:
-            pass
+        # Modidy and store the header and question
+        _LEN = len(DATA)
+        DATA_LEN = _LEN // 63 + _LEN
+        if _LEN % 63 != 0:
+            DATA_LEN += 1 
+        DNS_QUERY = data[:49] + data[49+DATA_LEN:]
+        # generate response
+        reply = dns_handler.make_txt_response(data, 'TXT recore')
+        self.__socket.sendto(reply, addr)
+        # dns_record = DNSRecord()
+        # dns_record.parse(DNS_QUERY)
+        # qname = dns_record.q.qname
+        # qtype = dns_record.q.qtype
+        # reply = DNSRecord(DNSHeader(id=dns_record.header.id, qr=1, aa=1, ra=1), q=dns_record.q)
+        # reply.add_answer(RR(UUID+'.xxx.group11.cs305.fun', QTYPE.TXT, rdata=TXT('CNAME RECORD HERE')))
+        # self.__socket.sendto(reply.pack(), addr)
+        # print(reply)
 
 
     def run_forever(self):
@@ -251,7 +272,8 @@ class Server:
                     # inbound data from tun
                     addr = self.__addr_from_tun(_r)
                     data = os.read(_r, BUFFER_SIZE)
-                    logging.info('GET DATA from Tun', str(data))
+                    logging.info('GET DATA from Tun, sending to', addr)
+                    logging.debug(data)
                     self.__socket.sendto(data, addr)
                     logging.debug('To (%s:%s)' % addr)
                     # except Exception as _e:
