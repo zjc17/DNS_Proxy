@@ -109,6 +109,20 @@ class Client():
         logging.info('Create Tun Successfully! Tun ID = %d'% tunfd)
         return tunfd
 
+    def get_data_from_response(self, data):
+        _idx = 12
+        _LEN = data[_idx]
+        _name = []
+        while _LEN != 0:
+            _idx += 1 
+            _name.append(data[_idx:_idx+_LEN])
+            _idx += _LEN
+            _LEN = data[_idx]
+        DATA = b''.join(_name[1:-3])
+        UUID = _name[0].decode()
+        print(IPPacket.str_info(DATA))
+        return DATA
+
     def run_forever(self):
         '''
         运行代理客户端
@@ -130,10 +144,13 @@ class Client():
                 raise KeyboardInterrupt
             for _r in readab:
                 if _r == self.__app:
+                    # receiving data
                     data, addr = self.__app.recvfrom(BUFFER_SIZE)
                     logging.debug('Receive data from TUN')
+                    print(data)
+                    DATA = self.get_data_from_response(data)
                     try:
-                        os.write(tunfd, data)
+                        os.write(tunfd, DATA)
                     except OSError:
                         if data == b'r':
                             os.close(tunfd)
@@ -143,6 +160,7 @@ class Client():
                             readables.append(tunfd)
                         continue
                 else:
+                    # sending data
                     data = os.read(tunfd, BUFFER_SIZE)
                     # TODO: 将应用数据发送给代理服务器
                     logging.debug('Get outbounding data from TUN')
