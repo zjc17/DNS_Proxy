@@ -8,17 +8,16 @@
 import os
 import re
 import sys
-import time
 import struct
 import socket
-from core import dns_handler
+import logging
 from fcntl import ioctl
 from select import select
-from threading import Thread
-from core.packet import IPPacket, UDPPacket
 from dnslib import DNSRecord
 from dnslib.dns import DNSError
-import logging
+from core import dns_handler
+from core.packet import IPPacket
+
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
@@ -28,7 +27,8 @@ UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
 MTU = 1400
 BUFFER_SIZE = 4096
 KEEPALIVE = 10
-
+DOMAIN_NS_IP = '120.78.166.34'
+HOST_NAME = 'group11.cs305.fun'
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -74,21 +74,6 @@ class Client():
         print('Local IP:', self.local_ip)
         _socket.close()
 
-    def keep_alive(self):
-        '''
-        子线程保持向服务端发送心跳包，以防止服务端清除会话断开隧道连接
-        TODO: 修改心跳包发送方式
-            - DNS查询
-        '''
-        def _keepalive(udp, dst_addr):
-            while True:
-                time.sleep(KEEPALIVE)
-                udp.sendto(b'\x00', dst_addr)
-        # k = Thread(target=_keepalive, args=(
-            # self.__app, self.__dst_addr), name='keep_alive')
-        # k.setDaemon(True)
-        # k.start()
-
     def login(self):
         '''
         连接服务端并配置代理隧道
@@ -104,24 +89,10 @@ class Client():
         txt_record = txt_records[0]
         tunfd, tun_name = create_tunnel()
         local_ip, peer_ip = txt_record.split(';')
-        logging.info('Local ip: %s\tPeer ip: %s' % (local_ip, peer_ip))
+        logging.info('Local ip: %s\tPeer ip: %s', local_ip, peer_ip)
         start_tunnel(tun_name, local_ip, peer_ip)
-        logging.info('Create Tun Successfully! Tun ID = %d'% tunfd)
+        logging.info('Create Tun Successfully! Tun ID = %d', tunfd)
         return tunfd
-
-    def get_data_from_response(self, data):
-        _idx = 12
-        _LEN = data[_idx]
-        _name = []
-        while _LEN != 0:
-            _idx += 1 
-            _name.append(data[_idx:_idx+_LEN])
-            _idx += _LEN
-            _LEN = data[_idx]
-        DATA = b''.join(_name[1:-3])
-        UUID = _name[0].decode()
-        print(IPPacket.str_info(DATA))
-        return DATA
 
     def run_forever(self):
         '''
@@ -144,21 +115,8 @@ class Client():
                 raise KeyboardInterrupt
             for _r in readab:
                 if _r == self.__app:
-                    # receiving data
-                    data, addr = self.__app.recvfrom(BUFFER_SIZE)
-                    logging.debug('Receive data from TUN')
-                    print(data)
-                    DATA = self.get_data_from_response(data)
-                    try:
-                        os.write(tunfd, DATA)
-                    except OSError:
-                        if data == b'r':
-                            os.close(tunfd)
-                            readables.remove(tunfd)
-                            print('Reconnecting...')
-                            tunfd = self.login()
-                            readables.append(tunfd)
-                        continue
+                    # Try to receive data
+                    pass
                 else:
                     # sending data
                     data = os.read(tunfd, BUFFER_SIZE)
@@ -182,26 +140,11 @@ class Client():
                 txt_record = txt_records[0]
                 logging.debug(bytes.fromhex(txt_record))
                 bytes_write = bytes.fromhex(txt_record)
-                
                 if bytes_write != b'':
                     print(IPPacket.str_info(bytes_write))
                     os.write(tunfd, bytes.fromhex(txt_record))
             except DNSError:
                 logging.debug('DNSError')
-
-DOMAIN_NS_IP = '120.78.166.34'
-HOST_NAME = 'group11.cs305.fun'
-
-def get_txt_record(name:str)->str:
-    if name:
-        name += '.'
-    reply = os.popen('dig -t txt @{} {}'.format(DOMAIN_NS_IP, name+HOST_NAME)).read()
-    import re
-    txt_records = re.findall(r'.*TXT.*\"(.*)\".*', reply)
-    print(reply)
-    assert len(txt_records) == 1
-    return txt_records[0]
-    
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
