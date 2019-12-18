@@ -31,6 +31,7 @@ BUFFER_SIZE = 4096
 KEEPALIVE = 10
 DOMAIN_NS_IP = '120.78.166.34'
 HOST_NAME = 'group11.cs305.fun'
+HOST_NAME = 'www.ibbb.top'
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -161,7 +162,6 @@ class Client():
         self.__request_login_msg()
         self.tun_fd = self.__socket
         while True:
-            print(self.readables)
             try:
                 readable_fd = select(self.readables, [], [], 10)[0]
             except KeyboardInterrupt:
@@ -169,7 +169,8 @@ class Client():
                 raise KeyboardInterrupt
             for _fd in readable_fd:
                 if _fd == self.__socket:
-                    pass
+                    response, addr = self.__socket.recvfrom(2048)
+                    self.__handle_dns_response(response)
                 else:
                     # 将从Tun拿到的IP包发送给代理服务器
                     ip_packet = os.read(self.tun_fd, BUFFER_SIZE)
@@ -179,16 +180,17 @@ class Client():
             logging.debug('Try to receive data')
             self.__request_down_msg()
             # Try to receive data
-            try:
-                response, _addr = self.__socket.recvfrom(2048)
-                logging.info('Receive data from %s', _addr)
-            except socket.timeout:
-                # self.__request_down_msg()
-                continue
-            self.__handle_dns_response(response)
+            # try:
+            #     response, _addr = self.__socket.recvfrom(2048)
+            #     logging.info('Receive data from %s', _addr)
+            # except socket.timeout:
+            #     # self.__request_down_msg()
+            #     continue
+            # self.__handle_dns_response(response)
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
+    DOMAIN_NS_ADDR = ('8.8.8.8', 53)
     try:
         Client().run_forever()
     except KeyboardInterrupt:
