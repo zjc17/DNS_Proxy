@@ -6,6 +6,7 @@
     - 修改数据包
 '''
 import os
+import re
 import sys
 import time
 import struct
@@ -98,7 +99,6 @@ class Client():
         response, _addr = self.__app.recvfrom(2048)
         response = str(DNSRecord().parse(response))
         # print(response)
-        import re
         txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
         assert len(txt_records) == 1
         txt_record = txt_records[0]
@@ -168,6 +168,26 @@ class Client():
                     # logging.debug('Rewrite data: %s'%IPPacket.str_info(data))
                     request = dns_handler.make_fake_request(HOST_NAME, UUID, data)
                     self.__app.sendto(request, DOMAIN_NS_ADDR)
+            logging.debug('Try to receive data')
+            # Try to receive data
+            request = dns_handler.make_fake_request(HOST_NAME, UUID, b'KEEP_ALIVE')
+            # self.__app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self.__app.sendto(request, DOMAIN_NS_ADDR)
+                response, _addr = self.__app.recvfrom(2048)
+                response = str(DNSRecord().parse(response))
+                print(response)
+                txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
+                assert len(txt_records) == 1
+                txt_record = txt_records[0]
+                logging.debug(bytes.fromhex(txt_record))
+                bytes_write = bytes.fromhex(txt_record)
+                
+                if bytes_write != b'':
+                    print(IPPacket.str_info(bytes_write))
+                    os.write(tunfd, bytes.fromhex(txt_record))
+            except DNSError:
+                logging.debug('DNSError')
 
 DOMAIN_NS_IP = '120.78.166.34'
 HOST_NAME = 'group11.cs305.fun'
@@ -187,7 +207,5 @@ if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
     try:
         Client().run_forever()
-    except IndexError:
-        print('Usage: %s [remote_ip] [remote_port]' % sys.argv[0])
     except KeyboardInterrupt:
         print('Closing vpn client ...')
