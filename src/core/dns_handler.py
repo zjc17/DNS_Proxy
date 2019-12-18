@@ -2,10 +2,12 @@
 '''
 DNS 相关操作
 '''
+import re
+import struct
 from dnslib import (DNSRecord, DNSHeader, DNSQuestion,
                     QTYPE, RR, A, MX, TXT, CNAME)
-import logging
-import struct
+from dnslib.dns import DNSError
+
 
 
 def make_response(data):
@@ -24,8 +26,21 @@ def make_response(data):
         reply.add_answer(RR(qname, qtype, rdata=MX('1.2.3.4')))
     else:
         reply.add_answer(RR(qname, QTYPE.CNAME, rdata=CNAME('CNAME RECORE')))
-    logging.debug(reply)
     return reply.pack()
+
+def decode_dns_question(data: bytes)->list(bytes):
+    '''
+    解析dns请求
+    '''
+    _idx = 12
+    _len = data[_idx]
+    _name = []
+    while _len != 0:
+        _idx += 1
+        _name.append(data[_idx:_idx+_len])
+        _idx += _len
+        _len = data[_idx]
+    return _name
 
 def make_txt_response(data, txt_record):
     '''
@@ -57,60 +72,54 @@ def put_bytes_into_txtrecord(data, bytes_record):
     reply.add_answer(RR(qname, qtype, rdata=TXT(bytes_record)))
     return reply.pack()
 
-def __split_with_length(DATA:bytes, length:int=63):
-    DATA_SEGMENTS = []
+def __split_with_length(data: bytes, length: int = 63):
+    data_segments = []
     _idx = 0
-    _LEN = len(DATA)
+    _len = len(data)
     while True:
-        if _idx + length >= _LEN:
-            DATA_SEGMENTS.append(DATA[_idx: _LEN])
+        if _idx + length >= _len:
+            data_segments.append(data[_idx: _len])
             break
-        else:
-            DATA_SEGMENTS.append(DATA[_idx: _idx+length])
-            _idx += length
-    return DATA_SEGMENTS
+        data_segments.append(data[_idx: _idx+length])
+        _idx += length
+    return data_segments
 
 
 
-def make_fake_request(HOST_NAME, UUID, DATA):
+def make_fake_request(host_name, uuid, data):
     '''
     进行伪装查询
-     0        12     49 
+     0        12     49
     | header | UUID |
     '''
-    DATA_SEGMENTS = __split_with_length(DATA, 63)
-    if len(DATA_SEGMENTS) > 3:
-        # TODO: check the lenth of DATA
-        print('len(DATA_SEGMENTS) =', len(DATA_SEGMENTS))
-        raise IndexError
-    request = DNSRecord()
-    request.add_question(DNSQuestion(UUID+'.'+HOST_NAME, QTYPE.TXT))
-    request_data = request.pack()
-    data = request_data[:49]
-    for DATA_SEG in DATA_SEGMENTS:
-        DATA_LEN = struct.pack('>B', len(DATA_SEG))
-        data += DATA_LEN + DATA_SEG
-    data += request_data[49:]
-    return data
+    assert len(data) <= 63*3
+    data_segments = __split_with_length(data, 63)
+    request_msg = DNSRecord()
+    request_msg.add_question(DNSQuestion(uuid+'.'+host_name, QTYPE.TXT))
+    request_data = request_msg.pack()
+    _idx = 13 + len(uuid)
+    modified_data = request_data[:_idx]
+    for data_seg in data_segments:
+        data_len = struct.pack('>B', len(data_seg))
+        modified_data += data_len + data_seg
+    modified_data += request_data[_idx:]
+    return modified_data
 
-
-
-
-if __name__ == '__main__':
-    HOST_NAME = 'group11.cs305.fun'
-    DOMAIN_NS_ADDR = ('120.78.166.34', 53)
-    UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
-    DATA = b'\x00\x00\x86\xdd`\x00\x00\x00\x00\x08:\xff\xfe\x80\x00\x00\x00\x00\x00\x00h-V\xf0\xae+5\x14\xff\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x85\x00\xda\xd9\x00\x00\x00\x00'
-    request = make_fake_request(HOST_NAME, UUID, DATA)
-    import socket
-    _socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    _socket.sendto(request, DOMAIN_NS_ADDR)
-    data, _addr = _socket.recvfrom(2048)
-    print('From', _addr)
-    print(data)
-    parser = DNSRecord.parse(data)
-    print(parser)
-    s:str = ""
-    s.s
+def txt_from_dns_response(response):
+    '''
+    从DNS响应获取TXT记录
+    TODO:
+    - 支持多条记录
+    - 不使用第三方库
+    '''
+    try:
+        response = str(DNSRecord().parse(response))
+        txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
+        assert len(txt_records) == 1
+        txt_record = txt_records[0]
+        return txt_record
+    except DNSError:
+        print('DNSError while parsing TXT record')
+    return ''
 
 # DNSQuestion:https://juejin.im/post/5ab719c151882577b45ef9d9

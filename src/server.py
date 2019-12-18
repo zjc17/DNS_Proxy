@@ -127,7 +127,7 @@ class Server:
         - DNS 请求检测
         - 新会话创建
         '''
-        name_data = self.decode_dns_question(request)
+        name_data = dns_handler.decode_dns_question(request)
         uuid = name_data[0].decode()
         logging.info('UUID: %s => \n%s', uuid, name_data[1].decode())
         # 相关预定义指令
@@ -141,21 +141,6 @@ class Server:
             self.__response_up_msg(name_data, addr)
             return
         logging.error('Invalid DNS Query or Not a Fake DNS')
-
-    @staticmethod
-    def decode_dns_question(data: bytes)->list(bytes):
-        '''
-        解析dns请求
-        '''
-        _idx = 12
-        _len = data[_idx]
-        _name = []
-        while _len != 0:
-            _idx += 1
-            _name.append(data[_idx:_idx+_len])
-            _idx += _len
-            _len = data[_idx]
-        return _name
 
     def run_forever(self):
         '''
