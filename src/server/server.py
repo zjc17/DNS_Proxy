@@ -18,7 +18,6 @@ from core.packet import IPPacket
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
-
 USER_UUID = ['779ea091-ad7d-43bf-8afc-8b94fdb576bf']
 BIND_ADDRESS = '0.0.0.0', 53
 NETWORK = '10.0.0.0/24'
@@ -29,7 +28,10 @@ LOCAL_IP = IPRANGE.pop(0)
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
-
+LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
+DOWN_MSG = b'DOWN'      # 用户请求数据 SESSION_UUID.DOWN.hostname.domain
+UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
+SESSION_MANAGER = SessionManager()
 
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -108,10 +110,6 @@ class SessionManager:
     会话管理
     创建、维护虚拟网卡
     '''
-    LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
-    RESPONSE_MSG = b'QUERY' # 用户请求数据 SESSION_UUID.QUERY.hostname.domain
-    REQUEST_MSG = None      # 用户上行数据 SESSION_UUID.$BYTE_DATA.hostname.domain
-
     def __init__(self, timeout=100):
         '''
         初始化Session池
@@ -132,6 +130,22 @@ class SessionManager:
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
             if session.uuid == uuid:
+                return session
+        return None
+
+    def get_session_from_tun_id(self, tun_id: str)->Session:
+        '''
+        从用户提供的Session UUID 获取 Session, 同时刷新Session
+        @return: Session or None
+        '''
+        _count = 0
+        for session in self.__session_pool:
+            if session.tun_id == tun_id:
+                _count += 1
+        assert _count < 2
+        # TODO: code ABOVE is for checking, remove to imporve the performance
+        for session in self.__session_pool:
+            if session.tun_id == tun_id:
                 return session
         return None
 
@@ -162,8 +176,6 @@ class SessionManager:
                 self.__session_pool.remove(session)
                 logging.debug('Delete Time Out Session')
 
-SESSION_MANAGER = SessionManager()
-
 class Server:
     '''
     模拟接受端
@@ -181,66 +193,32 @@ class Server:
         self.__socket = socket(AF_INET, SOCK_DGRAM)
         self.__socket.bind(BIND_ADDRESS)
         self.readables = [self.__socket]
-        self.sessions = []
-        self.tun_info = {'tun_name': None, 'tunfd': None, 'addr': None,
-                         'tun_addr': None, 'last_time': None, 'uuid': None,
-                         'buffer': []}
-        self.user_session = {}
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
-    def __tun_from_uuid(self, addr):
+    def __response_down_msg(self, data: list(bytes), addr)->bool:
         '''
-        获取 uudi 对应 tunfd
+        客户端请求接受数据包 KEEP_ALIVE 包\n
+        接受服务端指令/回传数据\n
+        用户请求数据 SESSION_UUID.QUERY.hostname.domain\n
         '''
-        for i in self.sessions:
-            if i['uuid'] == addr:
-                return i['tunfd']
-        return -1
-
-    def __uuid_from_tun(self, tunfd):
-        '''
-        获取 tunfd 对应的 uuid
-        '''
-        for i in self.sessions:
-            if i['tunfd'] == tunfd:
-                return i['uuid']
-        return -1
-
-    def del_session_by_tun(self, tunfd):
-        '''
-        根据 tunfd 删除会话
-        '''
-        if tunfd == -1:
+        assert data[1] == DOWN_MSG
+        session = SESSION_MANAGER.get_session_from_uuid(data[1].decode())
+        if session is None:
+            logging.error('Invalid Tun ID')
             return False
-        for i in self.sessions:
-            if i['tunfd'] == tunfd:
-                self.sessions.remove(i)
-                IPRANGE.append(i['tun_addr'])
-        self.readables.remove(tunfd)
-        os.close(tunfd)
+        packet = session.get_buffer_data()
+        if packet is None or len(packet) <= 20:
+            # TODO: reply sth to indicate no buffered data
+            # TODO: check whether is IP packet
+            packet = b''
+        reply = dns_handler.make_txt_response(data, packet.hex())
+        logging.debug('REPLY:')
+        logging.debug(reply)
+        self.__socket.sendto(reply, addr)
+        logging.debug('SEND BACK')
         return True
 
-    def __defined_keep_alive(self, data, addr, uuid):
-        '''
-        客户端请求接受数据包 KEEP_ALIVE 包
-        接受服务端指令/回传数据
-        '''
-        for session in self.sessions:
-            if session['uuid'] == uuid:
-                logging.debug('Buffer Len = %d', len(session['buffer']))
-                if len(session['buffer']) == 0:
-                    reply_packet = b''
-                else:
-                    reply_packet = session['buffer'].pop()
-                if len(reply_packet) > 20:
-                    print(IPPacket.str_info(reply_packet))
-                reply = dns_handler.make_txt_response(data, reply_packet.hex())
-                logging.debug('REPLY:')
-                logging.debug(reply)
-                self.__socket.sendto(reply, addr)
-                logging.debug('SEND BACK')
-
-    def __defined_login(self, data: list(bytes))->bool:
+    def __response_login_msg(self, data: list(bytes), addr)->bool:
         '''
         用户登录行为\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain\n
@@ -252,14 +230,15 @@ class Server:
         - True: 登录成功
         - False: 登录失败
         '''
-        assert data[1] == b'LOGIN'
+        assert data[1] == LOGIN_MSG
         session = SESSION_MANAGER.create_session(data[0].decode())
         if session is None:
             logging.info('Invalid User Login Detected')
             return False
         logging.info('Clinet <%s> connect successful', session.uuid)
         try:
-            reply = dns_handler.make_txt_response(data, '%s;%s'%(tun_addr, LOCAL_IP))
+            txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
+            reply = dns_handler.make_txt_response(data, txt_record)
             self.__socket.sendto(reply, addr)
             self.readables.append(session.tun_fd)
         except DNSError:
@@ -267,13 +246,15 @@ class Server:
             logging.debug('Login DNS Message Parsing error')
         return True
 
-    def __defined_upstreaming(self, data: list(bytes), addr):
+    @staticmethod
+    def __response_up_msg(data: list(bytes), _addr):
         '''
         相应用户上行数据\n
         @return
             - True: 成功转发上行数据
             - False: 异常
         '''
+        assert data[1] == UP_MSG
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
         if session is None:
             # TODO: 向用户回传消息，通知session uuid不合法
@@ -281,7 +262,7 @@ class Server:
             return False
         tun_fd = session.tun_fd
         # TODO: 将-3参数化
-        message = b''.join(data[1:-3])
+        message = b''.join(data[2:-3])
         # TODO: check valid IP Packet
         if len(message) < 20:
             logging.debug('Not a IP Packet <%s>', message)
@@ -293,8 +274,10 @@ class Server:
             os.write(tun_fd, message)
         except OSError:
             logging.error('Fail to write DATA to TUN')
+            return False
+        return True
 
-    def __handle_dns_request(self, request:bytes, addr):
+    def __handle_dns_request(self, request: bytes, addr):
         '''
         处理绑定53接口的UDP服务器数据
         - DNS 请求检测
@@ -302,19 +285,21 @@ class Server:
         '''
         name_data = self.decode_dns_question(request)
         uuid = name_data[0].decode()
-        logging.info('UUID: %s => \n%s', uuid, str(message))
+        logging.info('UUID: %s => \n%s', uuid, name_data[1].decode())
         # 相关预定义指令
-        if name_data[1] == b'LOGIN':
-            self.__defined_login(name_data)
+        if name_data[1] == LOGIN_MSG:   # b'LOGIN':
+            self.__response_login_msg(name_data, addr)
             return
-        if name_data[1] == b'KEEP_ALIVE':
-            self.__defined_keep_alive(request, addr, uuid)
+        if name_data[1] == DOWN_MSG:    # b'DOWN':
+            self.__response_down_msg(name_data, uuid)
             return
-        self.__defined_upstreaming(name_data, addr)
-        
+        if name_data[1] == UP_MSG:      # b'UP'
+            self.__response_up_msg(name_data, addr)
+            return
+        logging.error('Invalid DNS Query or Not a Fake DNS')
 
     @staticmethod
-    def decode_dns_question(data:bytes)->list(bytes):
+    def decode_dns_question(data: bytes)->list(bytes):
         '''
         解析dns请求
         '''
@@ -328,26 +313,27 @@ class Server:
             _len = data[_idx]
         return _name
 
-
     def run_forever(self):
         '''
         运行接收端
         '''
         while True:
             readab = select(self.readables, [], [], 1)[0]
-            for _r in readab:
-                if _r == self.__socket:
+            for tun_id in readab:
+                if tun_id == self.__socket:
                     # DNS packet
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
                     self.__handle_dns_request(data, addr)
                     continue
                 # inbound data from tun
-                data = os.read(_r, BUFFER_SIZE)
-                logging.info('GET DATA from Tun, sending to buffer')
-                for session in self.sessions:
-                    if session['tunfd'] == _r:
-                        session['buffer'].append(data)
-                    logging.debug('To %s', session['tun_name'])
+                data = os.read(tun_id, BUFFER_SIZE)
+                logging.debug('GET DATA from Tun, sending to buffer')
+                session = SESSION_MANAGER.get_session_from_tun_id(tun_id)
+                if session is None:
+                    logging.error('Invalid Tun ID')
+                    continue
+                session.put_buffer_data(data)
+                logging.debug('To %s', session.tun_name)
 
 if __name__ == '__main__':
     SERVER = Server()
