@@ -10,6 +10,7 @@ import struct
 import os
 import time
 import logging
+import uuid
 from dnslib.dns import DNSError
 from core import dns_handler
 from core.packet import IPPacket
@@ -48,11 +49,96 @@ def start_tunnel(tun_name, peer_ip):
     os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
              (tun_name, LOCAL_IP, peer_ip, MTU)).read()
 
+class Session:
+    '''
+    会话管理
+    Session(tun_fd,   # Tun 文件修饰符 
+            tun_addr, # Tun 内网目标地址
+            tun_name, # Tun 虚拟网卡命名
+            uuid,     # UUID for Session 增强用户认证
+            last_time,# 上次连接时间
+            buffer)   # 即将发送给改用户的数据包
+    Session 的UUID不同于用户的UUID
+        - 避免了多用户使用相同UUID进行认证
+        - TODO: Session的UUID使用 uuid1() 生成 (时间相关)，提供类似v2ray的超时丢包，避免中间人攻击
+    '''
+    def __init__(self, tun_fd, tun_addr, tun_name):
+        '''
+        初始化 Session
+        tun_fd,   # Tun 文件修饰符 
+        tun_addr, # Tun 内网目标地址
+        tun_name, # Tun 虚拟网卡命名
+        uuid,     # UUID for Session 增强用户认证
+        '''
+        self.tun_fd = tun_fd
+        self.tun_addr = tun_addr
+        self.tun_name = tun_name
+        self.uuid = str(uuid.uuid1())
+        self.__last_time = time.time()
+        self.__buffer = []
+        
+    def fresh_session(self):
+        '''
+        刷新Session访问时间
+        '''
+        self.last_time = time.time()
+    
+    def __put_buffer_data(self, data):
+        '''
+        向会话中写入缓存数据包
+        '''
+        assert isinstance(data, bytes)
+        self.__buffer.append(data)
+
+    def __get_buffer_data(self):
+        '''
+        获取会话中缓存的数据包
+        需要发送回客户端
+        @return:
+            - bytes if any
+            - None if no buffered data
+        '''
+        if len(self.buffer) == 0:
+            return None            
+        return self.buffer.pop(0)
+        
+class SessionManager:
+    '''
+    会话管理，创建、维护虚拟网卡
+    '''
+    def __init__(self):
+        '''
+        初始化Session池
+        '''
+        self.__session_pool = []
+
+    def __get_session_from_uuid(self, uuid:str)->Session:
+        '''
+        从用户提供的Session UUID 获取 Session, 同时刷新Session
+        @return: Session or None 
+        '''
+        _count = 0
+        for session in self.__session_pool:
+            if session.uuid == uuid:
+                _count += 1
+        assert _count < 2
+        # TODO: code above is for checking, remove to imporve the performance
+        for session in self.__session_pool:
+            if session.uuid == uuid:
+                return session
+        return None
+
 class Server:
     '''
     模拟接受端
+    用户管理:
+    mapping => UUID : Session(tun_fd,   # Tun 文件修饰符 
+                              tun_addr, # Tun 内网目标地址
+                              tun_name, # Tun 虚拟网卡命名
+                              last_time,# 上次连接时间
+                              buffer)   # 即将发送给改用户的数据包
+                              
     '''
-
     def __init__(self):
         '''
         初始化接受端
@@ -64,6 +150,7 @@ class Server:
         self.tun_info = {'tun_name': None, 'tunfd': None, 'addr': None,
                          'tun_addr': None, 'last_time': None, 'uuid': None,
                          'buffer': []}
+        self.user_session = {}
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
     def recvfrom(self):
