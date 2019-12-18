@@ -7,27 +7,26 @@ from fcntl import ioctl
 from ipaddress import ip_network
 from threading import Thread
 from select import select
-from core.packet import IPPacket
-from dnslib import DNSRecord
-from dnslib.dns import DNSError
 import struct
 import os
 import time
 import logging
+from dnslib import DNSRecord, DNSHeader, RR, TXT, QTYPE
+from dnslib.dns import DNSError
+from core import dns_handler
+from core.packet import IPPacket
+# TODO: [优化logging模块的使用](https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
-DEBUG = True
-PASSWORD = b'4fb88ca224e'
 
-BIND_ADDRESS = '0.0.0.0', 8080
+PASSWORD = ['779ea091-ad7d-43bf-8afc-8b94fdb576bf','TEST BLANK UUID', 'TEST-BLANKUUID']
+BIND_ADDRESS = '0.0.0.0', 53
 NETWORK = '10.0.0.0/24'
 BUFFER_SIZE = 4096
 MTU = 1400
-
 IPRANGE = list(map(str, ip_network(NETWORK)))[1:]
 LOCAL_IP = IPRANGE.pop(0)
-
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -66,7 +65,8 @@ class Server:
         self.readables = [self.__socket]
         self.sessions = []
         self.tun_info = {'tun_name': None, 'tunfd': None, 'addr': None,
-                         'tun_addr': None, 'last_time': None}
+                         'tun_addr': None, 'last_time': None, 'uuid': None,
+                         'buffer': []}
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
     def recvfrom(self):
@@ -95,19 +95,47 @@ class Server:
                 return i['addr']
         return -1
 
-    def create_session(self, addr):
+    def __tun_from_uuid(self, addr):
+        '''
+        获取 uudi 对应 tunfd
+        '''
+        for i in self.sessions:
+            if i['uuid'] == addr:
+                return i['tunfd']
+        return -1
+
+    def __uuid_from_tun(self, tunfd):
+        '''
+        获取 tunfd 对应的 uuid
+        '''
+        for i in self.sessions:
+            if i['tunfd'] == tunfd:
+                return i['uuid']
+        return -1
+    
+
+    def create_session(self, addr, data, uuid):
         '''
         创建会话
         '''
+        # check auth
+        if uuid not in PASSWORD:
+            logging.info('Invalid user with uuid = %s', uuid)
+            return False
         tunfd, tun_name = create_tunnel()
         tun_addr = IPRANGE.pop(0)
         start_tunnel(tun_name, tun_addr)
         self.sessions.append(
             {'tun_name': tun_name, 'tunfd': tunfd, 'addr': addr,
-             'tun_addr': tun_addr, 'last_time': time.time()})
+             'tun_addr': tun_addr, 'last_time': time.time(), 'uuid':uuid,
+             'buffer': []})
         self.readables.append(tunfd)
-        reply = '%s;%s' % (tun_addr, LOCAL_IP)
-        self.__socket.sendto(reply.encode(), addr)
+        try:
+            reply = dns_handler.make_txt_response(data, '%s;%s'%(tun_addr, LOCAL_IP))
+            self.__socket.sendto(reply, addr)
+        except DNSError:
+            logging.debug('Not a DNS Record or not a Command DNS Packet')
+        
 
     def del_session_by_tun(self, tunfd):
         '''
@@ -144,72 +172,133 @@ class Server:
 
     def auth(self, addr, data, tunfd):
         '''
-        TODO: 用户身份认证
+        用户身份认证
         '''
         if data == b'\x00':
-            if tunfd == -1:
-                self.__socket.sendto(b'r', (addr))
-            else:
+            if tunfd != -1:
                 self.update_last_time(tunfd)
+            else:
+                self.__socket.sendto(b'r', (addr))
             return False
         if data == b'e':
             if self.del_session_by_tun(tunfd):
                 logging.debug("Client %s:%s is disconnect" % (addr))
             return False
-        if data == PASSWORD:
+        if data in PASSWORD:
             return True
         logging.debug('Clinet %s:%s connect failed' % (addr))
         return False
+
+    def __KEEP_ALIVE(self, data, addr, UUID):
+        print('================KEEP ALIVE===================')
+        tunfd = self.__tun_from_uuid(UUID)
+        for session in self.sessions:
+            if session['uuid'] == UUID:
+                logging.debug('Buffer Len = %d'%(len(session['buffer'])))
+                if len(session['buffer']) == 0:
+                    reply_packet = b''
+                else:
+                    reply_packet = session['buffer'].pop()
+                if len(reply_packet) > 20:
+                    print(IPPacket.str_info(reply_packet))
+                reply = dns_handler.make_txt_response(data, reply_packet.hex())
+                logging.debug('REPLY:')
+                logging.debug(reply)
+                self.__socket.sendto(reply, addr)
+                logging.debug('SEND BACK')
+
+    
+    def __handle_dns_request(self, data, addr):
+        '''
+        处理绑定53接口的UDP服务器数据
+        - DNS 请求检测
+        - 新会话创建
+        '''
+        _idx = 12
+        _LEN = data[_idx]
+        _name = []
+        while _LEN != 0:
+            _idx += 1 
+            _name.append(data[_idx:_idx+_LEN])
+            _idx += _LEN
+            _LEN = data[_idx]
+        DATA = b''.join(_name[1:-3])
+        UUID = _name[0].decode()
+        # logging.info('From (%s:%s) UUID: %s' % (addr[0], addr[1], UUID))
+        logging.info('UUID: %s => %s'% (UUID, str(DATA)))
+        if UUID not in PASSWORD:
+            return
+        # 相关预定义指令
+        if DATA == b'LOGIN':
+            self.create_session(addr, data, UUID)
+            return
+        elif DATA == b'KEEP_ALIVE':
+            self.__KEEP_ALIVE(data, addr, UUID)
+            return
+        tunfd = self.__tun_from_uuid(UUID)
+        if len(DATA) >= 20:
+            print(addr)
+            try:
+                logging.debug('Try to send DATA(%d) to TUN'%(len(DATA)))
+                print(IPPacket.str_info(DATA))
+                print(type(DATA))
+                os.write(tunfd, DATA)
+            except OSError:
+                # 新会话请求
+                # if not self.auth(addr, data, tunfd):
+                #     continue
+                logging.info('Fail to write DATA to TUN')
+                self.create_session(addr, data, UUID)
+                logging.info('Clinet %s:%s connect successful' % addr)
+        # Modidy and store the header and question
+        # _LEN = len(DATA)
+        # DATA_LEN = _LEN // 63 + _LEN
+        # if _LEN % 63 != 0:
+        #     DATA_LEN += 1 
+        # DNS_QUERY = data[:49] + data[49+DATA_LEN:]
+        # # generate response
+        # reply = dns_handler.make_txt_response(data, 'TXT recore')
+        # self.__socket.sendto(reply, addr)
+        # dns_record = DNSRecord()
+        # dns_record.parse(DNS_QUERY)
+        # qname = dns_record.q.qname
+        # qtype = dns_record.q.qtype
+        # reply = DNSRecord(DNSHeader(id=dns_record.header.id, qr=1, aa=1, ra=1), q=dns_record.q)
+        # reply.add_answer(RR(UUID+'.xxx.group11.cs305.fun', QTYPE.TXT, rdata=TXT('CNAME RECORD HERE')))
+        # self.__socket.sendto(reply.pack(), addr)
+        # print(reply)
+
 
     def run_forever(self):
         '''
         运行接收端
         '''
-        clean_thread = Thread(target=self.clean_expire_tun)
-        clean_thread.setDaemon(True)
-        clean_thread.start()
+        # 定时刷新，删除过期连接
+        # clean_thread = Thread(target=self.clean_expire_tun)
+        # clean_thread.setDaemon(True)
+        # clean_thread.start()
         while True:
             readab = select(self.readables, [], [], 1)[0]
             for _r in readab:
-                print('=========================\n', d)
                 if _r == self.__socket:
-                    # 接收端转发后接受的回应
+                    # DNS packet
                     data, addr = self.__socket.recvfrom(BUFFER_SIZE)
-                    logging.info('from (%s:%s)' % addr)
-                    print('data:', data)
-                    if len(data) >= 20:
-                        logging.info(IPPacket.str_info(data))
-                    try:
-                        d = DNSRecord()
-                        d.parse(data)
-                    except DNSError:
-                        print('Not a DNS Record')
-                        pass
-                    ##
-                    udp_packet = IPPacket.get_next_layer(data)
-                    print('UDP packet:', udp_packet)
-                    ##
-                    try:
-                        tunfd = self.__tun_from_addr(addr)
-                        try:
-                            os.write(tunfd, data)
-                        except OSError:
-                            # 新会话请求
-                            if not self.auth(addr, data, tunfd):
-                                continue
-                            self.create_session(addr)
-                            logging.info('Clinet %s:%s connect successful' % addr)
-                    except OSError:
-                        continue
+                    self.__handle_dns_request(data, addr)
+                    continue
                 else:
-                    try:
-                        addr = self.__addr_from_tun(_r)
-                        data = os.read(_r, BUFFER_SIZE)
-                        self.__socket.sendto(data, addr)
-                        logging.debug('To (%s:%s)' % addr)
-                    except Exception as _e:
-                        print(repr(_e))
-                        continue
+                    # inbound data from tun
+                    addr = self.__addr_from_tun(_r)
+                    data = os.read(_r, BUFFER_SIZE)
+                    logging.info('GET DATA from Tun, sending to buffer')
+                    # logging.debug(data)
+                    # self.__socket.sendto(data, addr)
+                    for session in self.sessions:
+                        if session['tunfd'] == _r:
+                            session['buffer'].append(data)
+                        logging.debug('To %s'%session['tun_name'])
+                    # except Exception as _e:
+                    #     print(repr(_e))
+                    #     continue
 
 
 if __name__ == '__main__':
