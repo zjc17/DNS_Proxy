@@ -28,7 +28,7 @@ def make_response(data):
         reply.add_answer(RR(qname, QTYPE.CNAME, rdata=CNAME('CNAME RECORE')))
     return reply.pack()
 
-def decode_dns_question(data: bytes)->list(bytes):
+def decode_dns_question(data: bytes)->list:
     '''
     解析dns请求
     '''

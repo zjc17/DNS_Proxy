@@ -39,7 +39,7 @@ class Server:
         self.readables = [self.__socket]
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
-    def __response_down_msg(self, data: list(bytes), addr)->bool:
+    def __response_down_msg(self, data: list, addr)->bool:
         '''
         客户端请求接受数据包 KEEP_ALIVE 包\n
         接受服务端指令/回传数据\n
@@ -62,7 +62,7 @@ class Server:
         logging.debug('SEND BACK')
         return True
 
-    def __response_login_msg(self, data: list(bytes), addr)->bool:
+    def __response_login_msg(self, data: list, addr)->bool:
         '''
         用户登录行为\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain\n
@@ -91,7 +91,7 @@ class Server:
         return True
 
     @staticmethod
-    def __response_up_msg(data: list(bytes), _addr):
+    def __response_up_msg(data: list, _addr):
         '''
         相应用户上行数据\n
         @return
