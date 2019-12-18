@@ -48,7 +48,6 @@ def start_tunnel(tun_name, peer_ip):
     os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
              (tun_name, LOCAL_IP, peer_ip, MTU)).read()
 
-
 class Server:
     '''
     模拟接受端
