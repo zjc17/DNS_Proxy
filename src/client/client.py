@@ -86,8 +86,8 @@ class Client():
                 udp.sendto(b'\x00', dst_addr)
         # k = Thread(target=_keepalive, args=(
             # self.__app, self.__dst_addr), name='keep_alive')
-        k.setDaemon(True)
-        k.start()
+        # k.setDaemon(True)
+        # k.start()
 
     def login(self):
         '''
