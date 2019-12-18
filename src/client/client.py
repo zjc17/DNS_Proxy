@@ -6,18 +6,23 @@
     - 修改数据包
 '''
 import os
+import re
 import sys
 import time
 import struct
 import socket
+from core import dns_handler
 from fcntl import ioctl
 from select import select
 from threading import Thread
 from core.packet import IPPacket, UDPPacket
 from dnslib import DNSRecord
 from dnslib.dns import DNSError
+import logging
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S')
 
-PASSWORD = b'4fb88ca224e'
 UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
 
 MTU = 1400
@@ -56,7 +61,7 @@ class Client():
     def __init__(self):
         self.__app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__app.settimeout(5)
-        self.__dst_addr = SERVER_ADDRESS
+        # self.__dst_addr = SERVER_ADDRESS
         self.init_local_ip()
 
     def init_local_ip(self):
@@ -79,8 +84,8 @@ class Client():
             while True:
                 time.sleep(KEEPALIVE)
                 udp.sendto(b'\x00', dst_addr)
-        k = Thread(target=_keepalive, args=(
-            self.__app, self.__dst_addr), name='keep_alive')
+        # k = Thread(target=_keepalive, args=(
+            # self.__app, self.__dst_addr), name='keep_alive')
         k.setDaemon(True)
         k.start()
 
@@ -88,16 +93,35 @@ class Client():
         '''
         连接服务端并配置代理隧道
         '''
-        self.__app.sendto(PASSWORD, self.__dst_addr)
-        try:
-            data, _addr = self.__app.recvfrom(BUFFER_SIZE)
-            tunfd, tun_name = create_tunnel()
-            local_ip, peer_ip = data.decode().split(';')
-            print('Local ip: %s\tPeer ip: %s' % (local_ip, peer_ip))
-            start_tunnel(tun_name, local_ip, peer_ip)
-            return tunfd
-        except socket.timeout:
-            return False
+        request = dns_handler.make_fake_request(HOST_NAME, UUID, b'LOGIN')
+        # self.__app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.__app.sendto(request, DOMAIN_NS_ADDR)
+        response, _addr = self.__app.recvfrom(2048)
+        response = str(DNSRecord().parse(response))
+        # print(response)
+        txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
+        assert len(txt_records) == 1
+        txt_record = txt_records[0]
+        tunfd, tun_name = create_tunnel()
+        local_ip, peer_ip = txt_record.split(';')
+        logging.info('Local ip: %s\tPeer ip: %s' % (local_ip, peer_ip))
+        start_tunnel(tun_name, local_ip, peer_ip)
+        logging.info('Create Tun Successfully! Tun ID = %d'% tunfd)
+        return tunfd
+
+    def get_data_from_response(self, data):
+        _idx = 12
+        _LEN = data[_idx]
+        _name = []
+        while _LEN != 0:
+            _idx += 1 
+            _name.append(data[_idx:_idx+_LEN])
+            _idx += _LEN
+            _LEN = data[_idx]
+        DATA = b''.join(_name[1:-3])
+        UUID = _name[0].decode()
+        print(IPPacket.str_info(DATA))
+        return DATA
 
     def run_forever(self):
         '''
@@ -115,13 +139,18 @@ class Client():
             try:
                 readab = select(readables, [], [], 10)[0]
             except KeyboardInterrupt:
-                self.__app.sendto(b'e', self.__dst_addr)
+                # TODO: close the connection
+                # self.__app.sendto(b'e', self.__dst_addr)
                 raise KeyboardInterrupt
             for _r in readab:
                 if _r == self.__app:
+                    # receiving data
                     data, addr = self.__app.recvfrom(BUFFER_SIZE)
+                    logging.debug('Receive data from TUN')
+                    print(data)
+                    DATA = self.get_data_from_response(data)
                     try:
-                        os.write(tunfd, data)
+                        os.write(tunfd, DATA)
                     except OSError:
                         if data == b'r':
                             os.close(tunfd)
@@ -131,9 +160,34 @@ class Client():
                             readables.append(tunfd)
                         continue
                 else:
+                    # sending data
                     data = os.read(tunfd, BUFFER_SIZE)
                     # TODO: 将应用数据发送给代理服务器
-                    self.__app.sendto(data, self.__dst_addr)
+                    logging.debug('Get outbounding data from TUN')
+                    # data = data[:12] + b'\n\x00\x00\x02\n\x00\x00\x01' + data[20:]
+                    # logging.debug('Rewrite data: %s'%IPPacket.str_info(data))
+                    request = dns_handler.make_fake_request(HOST_NAME, UUID, data)
+                    self.__app.sendto(request, DOMAIN_NS_ADDR)
+            logging.debug('Try to receive data')
+            # Try to receive data
+            request = dns_handler.make_fake_request(HOST_NAME, UUID, b'KEEP_ALIVE')
+            # self.__app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self.__app.sendto(request, DOMAIN_NS_ADDR)
+                response, _addr = self.__app.recvfrom(2048)
+                response = str(DNSRecord().parse(response))
+                print(response)
+                txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
+                assert len(txt_records) == 1
+                txt_record = txt_records[0]
+                logging.debug(bytes.fromhex(txt_record))
+                bytes_write = bytes.fromhex(txt_record)
+                
+                if bytes_write != b'':
+                    print(IPPacket.str_info(bytes_write))
+                    os.write(tunfd, bytes.fromhex(txt_record))
+            except DNSError:
+                logging.debug('DNSError')
 
 DOMAIN_NS_IP = '120.78.166.34'
 HOST_NAME = 'group11.cs305.fun'
@@ -150,12 +204,8 @@ def get_txt_record(name:str)->str:
     
 
 if __name__ == '__main__':
-    # print(get_txt_record('779ea091-ad7d-43bf-8afc-8b94fdb576bf'))
+    DOMAIN_NS_ADDR = ('120.78.166.34', 53)
     try:
-        SERVER_ADDRESS = ('47.100.92.248', 8080)
-        # SERVER_ADDRESS = ('13.57.9.1', 53)
         Client().run_forever()
-    except IndexError:
-        print('Usage: %s [remote_ip] [remote_port]' % sys.argv[0])
     except KeyboardInterrupt:
         print('Closing vpn client ...')
