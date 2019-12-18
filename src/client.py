@@ -68,6 +68,7 @@ class Client():
         # self.__dst_addr = SERVER_ADDRESS
         self.init_local_ip()
         self.s_uuid = None # UUID for session
+        self.readables = [self.__socket]
 
     def init_local_ip(self):
         '''
@@ -87,42 +88,70 @@ class Client():
         '''
         request = dns_handler.make_fake_request(HOST_NAME, UUID, LOGIN_MSG)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)        
-    
+
     def __request_up_msg(self, data:bytes):
         '''
         请求用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
         '''
-        SESSION_UUID = self.s_uuid+'.UP'
-        request = dns_handler.make_fake_request(HOST_NAME, SESSION_UUID, data)
+        s_uuid = self.s_uuid+'.UP'
+        request = dns_handler.make_fake_request(HOST_NAME, s_uuid, data)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
-    
+        logging.debug('Send data in DNS request')
+        logging.debug(request)
+
     def __request_down_msg(self):
         '''
         请求用户下行数据 SESSION_UUID.DOWN.hostname.domain
         '''
-        request = dns_handler.make_fake_request(HOST_NAME, UUID, DOWN_MSG)
+        request = dns_handler.make_fake_request(HOST_NAME, self.s_uuid, DOWN_MSG)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
-    
+
     def __decode_down_msg(self, response):
         '''
         解析用户下行数据
         '''
-        txt_record = dns_handler.txt_from_dns_response(response)
-        logging.debug(bytes.fromhex(txt_record))
-            bytes_write = bytes.fromhex(txt_record)
-            if bytes_write != b'':
-                print(IPPacket.str_info(bytes_write))
-                os.write(tunfd, bytes.fromhex(txt_record))
-    def __decode_down_msg(self, response):
+        txt_records = dns_handler.txt_from_dns_response(response)
+        if len(txt_records) < 1:
+            logging.debug('No TXT record in response')
+            return
+        txt_record = txt_records[0]
+        bytes_write = bytes.fromhex(txt_record)
+        return bytes_write
+
+    def __decode_login_msg(self, response):
         '''
         解析用户登录响应
         '''
-        txt_record = dns_handler.txt_from_dns_response(response)
-        self.tunfd, tun_name = create_tunnel()
+        txt_records = dns_handler.txt_from_dns_response(response)
+        assert len(txt_records) == 1
+        txt_record = txt_records[0]
+        self.tun_fd, tun_name = create_tunnel()
+        self.readables.append(self.tun_fd)
         self.s_uuid, local_ip, peer_ip = txt_record.split(';')
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
         start_tunnel(tun_name, local_ip, peer_ip)
-        logging.info('Create Tun Successfully! Tun ID = %d', tunfd)
+        logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
+
+    def __handle_dns_response(self, response):
+        '''
+        处理UDP客户端接受的
+        '''
+        name_data = dns_handler.decode_dns_question(response)
+        if name_data[1] == LOGIN_MSG:   # b'LOGIN':
+            logging.info('Connect to server successful')
+            self.__decode_login_msg(response)
+            return
+        if name_data[1] == DOWN_MSG:    # b'DOWN':
+            bytes_write = self.__decode_down_msg(response)
+            logging.debug(bytes_write)
+            if bytes_write is not None and len(bytes_write) > 20:
+                # Check if IPPacket
+                print(IPPacket.str_info(bytes_write))
+                os.write(self.tun_fd, bytes_write)
+            return
+        if name_data[1] == UP_MSG:      # b'UP'
+            logging.error('Server Response Invalid Question')
+            return
 
     def run_forever(self):
         '''
@@ -130,40 +159,33 @@ class Client():
         '''
         print('Start connect to server...')
         self.__request_login_msg()
-        if not tunfd:
-            print("Connect failed!")
-            sys.exit(0)
-        print('Connect to server successful')
-        readables = [self.__socket, self.tunfd]
+        self.tun_fd = self.__socket
         while True:
+            print(self.readables)
             try:
-                readable_fd = select(readables, [], [], 10)[0]
+                readable_fd = select(self.readables, [], [], 10)[0]
             except KeyboardInterrupt:
                 # TODO: close the connection
-                # self.__app.sendto(b'e', self.__dst_addr)
                 raise KeyboardInterrupt
-            for fd in readable_fd:
-                if fd == self.__socket:
-                    # Try to receive data
-                    response, _addr = self.__socket.recvfrom(2048)
-                    name_data = dns_handler.decode_dns_question(response)
-                    if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-                        self.__decode_login_msg(response)
-                        continue
-                    if name_data[1] == DOWN_MSG:    # b'DOWN':
-                        self.__decode_down_msg(response)
-                        continue
-                    if name_data[1] == UP_MSG:      # b'UP'
-                        logging.error('Server Response Invalid Question')
-                        continue
+            for _fd in readable_fd:
+                if _fd == self.__socket:
+                    pass
                 else:
                     # 将从Tun拿到的IP包发送给代理服务器
-                    ip_packet = os.read(tunfd, BUFFER_SIZE)
+                    ip_packet = os.read(self.tun_fd, BUFFER_SIZE)
                     logging.debug('Get outbounding data from TUN')
                     self.__request_up_msg(ip_packet)
             # 发送心跳包，尝试接受数据
             logging.debug('Try to receive data')
             self.__request_down_msg()
+            # Try to receive data
+            try:
+                response, _addr = self.__socket.recvfrom(2048)
+                logging.info('Receive data from %s', _addr)
+            except socket.timeout:
+                # self.__request_down_msg()
+                continue
+            self.__handle_dns_response(response)
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
