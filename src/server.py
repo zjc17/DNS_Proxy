@@ -142,7 +142,7 @@ class Server:
         if name_data[1] == UP_MSG:      # b'UP'
             self.__response_up_msg(name_data, addr)
             return
-        logging.error('Invalid DNS Query or Not a Fake DNS')
+        logging.error('Invalid DNS Query or Not a Fake DNS', name_data[1])
 
     def run_forever(self):
         '''
