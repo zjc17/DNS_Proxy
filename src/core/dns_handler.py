@@ -86,7 +86,7 @@ def __split_with_length(data: bytes, length: int = 63):
 
 
 
-def make_fake_request(host_name, uuid, data):
+def make_fake_request(host_name, uuid:str, data):
     '''
     进行伪装查询
      0        12     49
@@ -115,9 +115,7 @@ def txt_from_dns_response(response):
     try:
         response = str(DNSRecord().parse(response))
         txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
-        assert len(txt_records) == 1
-        txt_record = txt_records[0]
-        return txt_record
+        return txt_records
     except DNSError:
         print('DNSError while parsing TXT record')
     return ''
