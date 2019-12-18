@@ -65,7 +65,8 @@ class Server:
         self.readables = [self.__socket]
         self.sessions = []
         self.tun_info = {'tun_name': None, 'tunfd': None, 'addr': None,
-                         'tun_addr': None, 'last_time': None, 'uuid': None}
+                         'tun_addr': None, 'last_time': None, 'uuid': None,
+                         'buffer': []}
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
     def recvfrom(self):
@@ -126,7 +127,8 @@ class Server:
         start_tunnel(tun_name, tun_addr)
         self.sessions.append(
             {'tun_name': tun_name, 'tunfd': tunfd, 'addr': addr,
-             'tun_addr': tun_addr, 'last_time': time.time(), 'uuid':uuid})
+             'tun_addr': tun_addr, 'last_time': time.time(), 'uuid':uuid,
+             'buffer': []})
         self.readables.append(tunfd)
         try:
             reply = dns_handler.make_txt_response(data, '%s;%s'%(tun_addr, LOCAL_IP))
@@ -186,9 +188,24 @@ class Server:
             return True
         logging.debug('Clinet %s:%s connect failed' % (addr))
         return False
-    
 
-
+    def __KEEP_ALIVE(self, data, addr, UUID):
+        print('================KEEP ALIVE===================')
+        tunfd = self.__tun_from_uuid(UUID)
+        for session in self.sessions:
+            if session['uuid'] == UUID:
+                logging.debug('Buffer Len = %d'%(len(session['buffer'])))
+                if len(session['buffer']) == 0:
+                    reply_packet = b''
+                else:
+                    reply_packet = session['buffer'].pop()
+                if len(reply_packet) > 20:
+                    print(IPPacket.str_info(reply_packet))
+                reply = dns_handler.make_txt_response(data, reply_packet.hex())
+                logging.debug('REPLY:')
+                logging.debug(reply)
+                self.__socket.sendto(reply, addr)
+                logging.debug('SEND BACK')
 
     
     def __handle_dns_request(self, data, addr):
@@ -216,7 +233,7 @@ class Server:
             self.create_session(addr, data, UUID)
             return
         elif DATA == b'KEEP_ALIVE':
-            # TODO: 
+            self.__KEEP_ALIVE(data, addr, UUID)
             return
         tunfd = self.__tun_from_uuid(UUID)
         if len(DATA) >= 20:
@@ -234,14 +251,14 @@ class Server:
                 self.create_session(addr, data, UUID)
                 logging.info('Clinet %s:%s connect successful' % addr)
         # Modidy and store the header and question
-        _LEN = len(DATA)
-        DATA_LEN = _LEN // 63 + _LEN
-        if _LEN % 63 != 0:
-            DATA_LEN += 1 
-        DNS_QUERY = data[:49] + data[49+DATA_LEN:]
-        # generate response
-        reply = dns_handler.make_txt_response(data, 'TXT recore')
-        self.__socket.sendto(reply, addr)
+        # _LEN = len(DATA)
+        # DATA_LEN = _LEN // 63 + _LEN
+        # if _LEN % 63 != 0:
+        #     DATA_LEN += 1 
+        # DNS_QUERY = data[:49] + data[49+DATA_LEN:]
+        # # generate response
+        # reply = dns_handler.make_txt_response(data, 'TXT recore')
+        # self.__socket.sendto(reply, addr)
         # dns_record = DNSRecord()
         # dns_record.parse(DNS_QUERY)
         # qname = dns_record.q.qname
@@ -272,10 +289,13 @@ class Server:
                     # inbound data from tun
                     addr = self.__addr_from_tun(_r)
                     data = os.read(_r, BUFFER_SIZE)
-                    logging.info('GET DATA from Tun, sending to', addr)
-                    logging.debug(data)
-                    self.__socket.sendto(data, addr)
-                    logging.debug('To (%s:%s)' % addr)
+                    logging.info('GET DATA from Tun, sending to buffer')
+                    # logging.debug(data)
+                    # self.__socket.sendto(data, addr)
+                    for session in self.sessions:
+                        if session['tunfd'] == _r:
+                            session['buffer'].append(data)
+                        logging.debug('To %s'%session['tun_name'])
                     # except Exception as _e:
                     #     print(repr(_e))
                     #     continue
