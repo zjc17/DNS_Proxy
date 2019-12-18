@@ -6,17 +6,17 @@
     - 修改数据包
 '''
 import logging
+import time
 import os
 import re
 import socket
 import struct
 import sys
+import uuid as UUID_GENERATOR
 from fcntl import ioctl
 from select import select
-
 from dnslib import DNSRecord
 from dnslib.dns import DNSError
-
 from core import dns_handler
 from core.packet import IPPacket
 
@@ -102,9 +102,10 @@ class Client():
 
     def __request_down_msg(self):
         '''
-        请求用户下行数据 SESSION_UUID.DOWN.hostname.domain
+        请求用户下行数据 SESSION_UUID.DOWN.<RANDOM_UUID>.hostname.domain
         '''
-        request = dns_handler.make_fake_request(HOST_NAME, self.s_uuid, DOWN_MSG)
+        d_uuid = self.s_uuid+'.DOWN'
+        request = dns_handler.make_fake_request(HOST_NAME, d_uuid, str(UUID_GENERATOR.uuid1()).encode())
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
 
     def __decode_down_msg(self, response):
@@ -149,6 +150,9 @@ class Client():
                 # Check if IPPacket
                 print(IPPacket.str_info(bytes_write))
                 os.write(self.tun_fd, bytes_write)
+            else:
+                time.sleep(0.1)
+                pass
             return
         if name_data[1] == UP_MSG:      # b'UP'
             logging.error('Server Response Invalid Question')
@@ -170,6 +174,13 @@ class Client():
             for _fd in readable_fd:
                 if _fd == self.__socket:
                     response, addr = self.__socket.recvfrom(2048)
+                    print('Header ID', struct.unpack('>H', response[:2]))
+                    try:
+                        d = DNSRecord()
+                        d.parse(response)
+                        print(d)
+                    except DNSError:
+                        pass
                     self.__handle_dns_response(response)
                 else:
                     # 将从Tun拿到的IP包发送给代理服务器
@@ -179,14 +190,6 @@ class Client():
             # 发送心跳包，尝试接受数据
             logging.debug('Try to receive data')
             self.__request_down_msg()
-            # Try to receive data
-            # try:
-            #     response, _addr = self.__socket.recvfrom(2048)
-            #     logging.info('Receive data from %s', _addr)
-            # except socket.timeout:
-            #     # self.__request_down_msg()
-            #     continue
-            # self.__handle_dns_response(response)
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
