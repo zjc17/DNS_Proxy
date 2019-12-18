@@ -39,14 +39,14 @@ class Server:
         self.readables = [self.__socket]
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
-    def __response_down_msg(self, data: list, addr)->bool:
+    def __response_down_msg(self, request: bytes, data: list, addr:tuple)->bool:
         '''
         客户端请求接受数据包 KEEP_ALIVE 包\n
         接受服务端指令/回传数据\n
         用户请求数据 SESSION_UUID.QUERY.hostname.domain\n
         '''
         assert data[1] == DOWN_MSG
-        session = SESSION_MANAGER.get_session_from_uuid(data[1].decode())
+        session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
         if session is None:
             logging.error('Invalid Tun ID')
             return False
@@ -55,19 +55,21 @@ class Server:
             # TODO: reply sth to indicate no buffered data
             # TODO: check whether is IP packet
             packet = b''
-        reply = dns_handler.make_txt_response(data, packet.hex())
+        reply = dns_handler.make_txt_response(request, packet.hex())
         logging.debug('REPLY:')
         logging.debug(reply)
+        logging.error('Addr:')
+        logging.error(addr)
         self.__socket.sendto(reply, addr)
         logging.debug('SEND BACK')
         return True
 
-    def __response_login_msg(self, data: list, addr)->bool:
+    def __response_login_msg(self, request: bytes, data: list, addr:tuple)->bool:
         '''
         用户登录行为\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain\n
         @data: 解析后的请求域名 [b'USER_UUID', b'LOGIN', b'hostname', b'domain']
-        若成功登录，则
+        若成功登录，则\n
         - 添加tun_fd至可读取端口集合
         - 回应用户应答
         @return:
@@ -82,7 +84,7 @@ class Server:
         logging.info('Clinet <%s> connect successful', session.uuid)
         try:
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
-            reply = dns_handler.make_txt_response(data, txt_record)
+            reply = dns_handler.make_txt_response(request, txt_record)
             self.__socket.sendto(reply, addr)
             self.readables.append(session.tun_fd)
         except DNSError:
@@ -129,13 +131,13 @@ class Server:
         '''
         name_data = dns_handler.decode_dns_question(request)
         uuid = name_data[0].decode()
-        logging.info('UUID: %s => \n%s', uuid, name_data[1].decode())
+        logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
         # 相关预定义指令
         if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-            self.__response_login_msg(name_data, addr)
+            self.__response_login_msg(request, name_data, addr)
             return
         if name_data[1] == DOWN_MSG:    # b'DOWN':
-            self.__response_down_msg(name_data, uuid)
+            self.__response_down_msg(request, name_data, addr)
             return
         if name_data[1] == UP_MSG:      # b'UP'
             self.__response_up_msg(name_data, addr)
@@ -157,7 +159,7 @@ class Server:
                 # inbound data from tun
                 data = os.read(tun_id, BUFFER_SIZE)
                 logging.debug('GET DATA from Tun, sending to buffer')
-                session = SESSION_MANAGER.get_session_from_tun_id(tun_id)
+                session = SESSION_MANAGER.get_session_from_tun_fd(tun_id)
                 if session is None:
                     logging.error('Invalid Tun ID')
                     continue

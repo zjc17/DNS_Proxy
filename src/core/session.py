@@ -119,19 +119,19 @@ class SessionManager:
                 return session
         return None
 
-    def get_session_from_tun_id(self, tun_id: str)->Session:
+    def get_session_from_tun_fd(self, tun_fd: str)->Session:
         '''
         从用户提供的Session UUID 获取 Session, 同时刷新Session
         @return: Session or None
         '''
         _count = 0
         for session in self.__session_pool:
-            if session.tun_id == tun_id:
+            if session.tun_fd == tun_fd:
                 _count += 1
         assert _count < 2
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
-            if session.tun_id == tun_id:
+            if session.tun_fd == tun_fd:
                 return session
         return None
 
