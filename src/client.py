@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%H:%M:%S')
 
 UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
-MTU = 1400
+MTU = 180
 BUFFER_SIZE = 4096
 KEEPALIVE = 10
 DOMAIN_NS_IP = '120.78.166.34'
@@ -103,7 +103,7 @@ class Client():
         c_t_1 = Thread(target=_keepalive, args=(), name='keep_alive')
         c_t_1.setDaemon(True)
         c_t_1.start()
-    
+
     def __keep_ask(self, keep: bool):
         '''
         keep_ask:
