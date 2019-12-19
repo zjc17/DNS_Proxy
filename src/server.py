@@ -36,7 +36,7 @@ class Server:
         '''
         self.__socket = socket(AF_INET, SOCK_DGRAM)
         self.__socket.bind(BIND_ADDRESS)
-        self.readables = [self.__socket]
+        SESSION_MANAGER.readables = [self.__socket]
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
     def __response_down_msg(self, request: bytes, data: list, addr: tuple)->bool:
@@ -85,8 +85,9 @@ class Server:
         try:
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
             reply = dns_handler.make_txt_response(request, txt_record)
+            print(reply)
             self.__socket.sendto(reply, addr)
-            self.readables.append(session.tun_fd)
+            SESSION_MANAGER.readables.append(session.tun_fd)
         except DNSError:
             logging.info('Fail To Set Up Tunnel')
             logging.debug('Login DNS Message Parsing error')
@@ -131,25 +132,32 @@ class Server:
         '''
         name_data = dns_handler.decode_dns_question(request)
         uuid = name_data[0].decode()
-        logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
-        # 相关预定义指令
-        if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-            self.__response_login_msg(request, name_data, addr)
-            return
-        if name_data[1] == DOWN_MSG:    # b'DOWN':
-            self.__response_down_msg(request, name_data, addr)
-            return
-        if name_data[1] == UP_MSG:      # b'UP'
-            self.response_up_msg(name_data, addr)
-            return
-        logging.error('Invalid DNS Query or Not a Fake DNS %s', name_data[1])
+        try:
+            logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
+            # 相关预定义指令
+            if name_data[1] == LOGIN_MSG:   # b'LOGIN':
+                self.__response_login_msg(request, name_data, addr)
+                return
+            if name_data[1] == DOWN_MSG:    # b'DOWN':
+                self.__response_down_msg(request, name_data, addr)
+                return
+            if name_data[1] == UP_MSG:      # b'UP'
+                self.response_up_msg(name_data, addr)
+                return
+        except IndexError:
+            logging.error('Invalid DNS Query or Not a Fake DNS %s', name_data)
 
     def run_forever(self):
         '''
         运行接收端
         '''
         while True:
-            readab = select(self.readables, [], [], 1)[0]
+            try:
+                readab = select(SESSION_MANAGER.readables, [], [], 1)[0]
+            except OSError:
+                # detected the closed fd
+                logging.debug('Closed fd Detected')
+                raise OSError
             for tun_id in readab:
                 if tun_id == self.__socket:
                     # DNS packet

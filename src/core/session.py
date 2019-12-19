@@ -96,6 +96,7 @@ class SessionManager:
     用户认证
     会话管理
     创建、维护虚拟网卡
+    TODO: 管理 IP 分配完毕的异常 （基本不需要考虑，甚至可以分配更大的range）
     '''
     def __init__(self, timeout=30):
         '''
@@ -104,6 +105,7 @@ class SessionManager:
         self.__session_pool = []
         self.__time_out = timeout
         self.__del_expired_session()
+        self.readables = []
 
     def get_session_from_uuid(self, uuid: str)->Session:
         '''
@@ -160,11 +162,17 @@ class SessionManager:
         删除过期session
         '''
         def _del_expired_session():
-            time_del = time.time() - self.__time_out
-            for session in self.__session_pool:
-                if session.last_time < time_del:
-                    self.__session_pool.remove(session)
-                    logging.info('Delete Time Out Session <%s>', session.uuid)
+            while True:
+                time.sleep(self.__time_out-10)
+                time_del = time.time() - self.__time_out
+                for session in self.__session_pool:
+                    if session.last_time < time_del:
+                        # 回收 IP, 添加回 IPRANGE 等待分配
+                        self.readables.remove(session.tun_fd)
+                        os.close(session.tun_fd)
+                        IPRANGE.insert(0, session.tun_addr)
+                        self.__session_pool.remove(session)
+                        logging.info('Delete Time Out Session <%s>', session.uuid)
         c_t_1 = Thread(target=_del_expired_session, args=(), name='del_expired_session')
         c_t_1.setDaemon(True)
         c_t_1.start()
