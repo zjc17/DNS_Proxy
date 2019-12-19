@@ -8,18 +8,18 @@ import os
 import logging
 from dnslib.dns import DNSError
 from core import dns_handler
-from core.packet import IPPacket
 from core.session import SessionManager, LOCAL_IP
 # TODO 优化logging模块的使用 https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
-BUFFER_SIZE = 4096
 BIND_ADDRESS = '0.0.0.0', 53
+BUFFER_SIZE = 4096
 LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
 DOWN_MSG = b'DOWN'      # 用户请求数据 SESSION_UUID.DOWN.hostname.domain
 UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
-SESSION_MANAGER = SessionManager()
+CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
+SESSION_MANAGER = SessionManager(timeout=30)
 class Server:
     '''
     模拟接受端
@@ -36,10 +36,10 @@ class Server:
         '''
         self.__socket = socket(AF_INET, SOCK_DGRAM)
         self.__socket.bind(BIND_ADDRESS)
-        self.readables = [self.__socket]
+        SESSION_MANAGER.readables = [self.__socket]
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
-    def __response_down_msg(self, request: bytes, data: list, addr:tuple)->bool:
+    def __response_down_msg(self, request: bytes, data: list, addr: tuple)->bool:
         '''
         客户端请求接受数据包 KEEP_ALIVE 包\n
         接受服务端指令/回传数据\n
@@ -47,11 +47,15 @@ class Server:
         '''
         assert data[1] == DOWN_MSG
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
-        if session is None:
+        if session is False:
             logging.error('Invalid Tun ID')
             return False
-        packet = session.get_buffer_data()
-        if packet is None or len(packet) <= 20:
+        if session is True:
+            logging.debug('客户端过期，提示重新登录')
+            packet = CLOSED_SESSION_MSG
+        else:
+            packet = session.get_buffer_data()
+        if packet is None:
             # TODO: reply sth to indicate no buffered data
             # TODO: check whether is IP packet
             packet = b''
@@ -64,7 +68,7 @@ class Server:
         logging.debug('SEND BACK')
         return True
 
-    def __response_login_msg(self, request: bytes, data: list, addr:tuple)->bool:
+    def __response_login_msg(self, request: bytes, data: list, addr: tuple)->bool:
         '''
         用户登录行为\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain\n
@@ -86,14 +90,14 @@ class Server:
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
             reply = dns_handler.make_txt_response(request, txt_record)
             self.__socket.sendto(reply, addr)
-            self.readables.append(session.tun_fd)
+            SESSION_MANAGER.readables.append(session.tun_fd)
         except DNSError:
             logging.info('Fail To Set Up Tunnel')
             logging.debug('Login DNS Message Parsing error')
         return True
 
     @staticmethod
-    def __response_up_msg(data: list, _addr):
+    def response_up_msg(data: list, _addr: tuple):
         '''
         相应用户上行数据\n
         @return
@@ -102,21 +106,18 @@ class Server:
         '''
         assert data[1] == UP_MSG
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
-        if session is None:
+        if session is False:
             # TODO: 向用户回传消息，通知session uuid不合法
             logging.info('Invalid Session <%s>', data[0].decode())
+            return False
+        if session is True:
+            logging.debug('客户端过期，上行数据请求无法回复')
             return False
         tun_fd = session.tun_fd
         # TODO: 将-3参数化
         message = b''.join(data[2:-3])
-        # TODO: check valid IP Packet
-        if len(message) < 20:
-            logging.debug('Not a IP Packet <%s>', message)
-            return False
         try:
             logging.debug('Try to send DATA(%d) to TUN', (len(message)))
-            print(IPPacket.str_info(message))
-            print(type(message))
             os.write(tun_fd, message)
         except OSError:
             logging.error('Fail to write DATA to TUN')
@@ -131,25 +132,32 @@ class Server:
         '''
         name_data = dns_handler.decode_dns_question(request)
         uuid = name_data[0].decode()
-        logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
-        # 相关预定义指令
-        if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-            self.__response_login_msg(request, name_data, addr)
-            return
-        if name_data[1] == DOWN_MSG:    # b'DOWN':
-            self.__response_down_msg(request, name_data, addr)
-            return
-        if name_data[1] == UP_MSG:      # b'UP'
-            self.__response_up_msg(name_data, addr)
-            return
-        logging.error('Invalid DNS Query or Not a Fake DNS', name_data[1])
+        try:
+            logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
+            # 相关预定义指令
+            if name_data[1] == LOGIN_MSG:   # b'LOGIN':
+                self.__response_login_msg(request, name_data, addr)
+                return
+            if name_data[1] == DOWN_MSG:    # b'DOWN':
+                self.__response_down_msg(request, name_data, addr)
+                return
+            if name_data[1] == UP_MSG:      # b'UP'
+                self.response_up_msg(name_data, addr)
+                return
+        except IndexError:
+            logging.error('Invalid DNS Query or Not a Fake DNS %s', name_data)
 
     def run_forever(self):
         '''
         运行接收端
         '''
         while True:
-            readab = select(self.readables, [], [], 1)[0]
+            try:
+                readab = select(SESSION_MANAGER.readables, [], [], 1)[0]
+            except OSError:
+                # detected the closed fd
+                logging.debug('Closed fd Detected')
+                raise OSError
             for tun_id in readab:
                 if tun_id == self.__socket:
                     # DNS packet

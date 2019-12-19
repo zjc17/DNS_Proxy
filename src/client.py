@@ -8,15 +8,12 @@
 import logging
 import time
 import os
-import re
 import socket
 import struct
-import sys
 import uuid as UUID_GENERATOR
+from threading import Thread
 from fcntl import ioctl
 from select import select
-from dnslib import DNSRecord
-from dnslib.dns import DNSError
 from core import dns_handler
 from core.packet import IPPacket
 
@@ -25,8 +22,7 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%H:%M:%S')
 
 UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
-
-MTU = 1400
+MTU = 180
 BUFFER_SIZE = 4096
 KEEPALIVE = 10
 DOMAIN_NS_IP = '120.78.166.34'
@@ -38,6 +34,8 @@ IFF_TAP = 0x0002
 LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
 DOWN_MSG = b'DOWN'      # 用户下行数据 SESSION_UUID.DOWN.hostname.domain
 UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
+CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
+MAX_KEEP_ASK = 3
 
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -57,6 +55,11 @@ def start_tunnel(tun_name, local_ip, peer_ip):
     os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
              (tun_name, local_ip, peer_ip, MTU)).read()
 
+class SessionExpiredException(Exception):
+    '''
+    Expection Trigged when the client detects login out
+    '''
+
 
 class Client():
     '''
@@ -64,33 +67,80 @@ class Client():
     '''
 
     def __init__(self):
+        '''
+        初始化代理客户端
+        - 心跳包管理
+        - 常规查询包，keep_ask
+        '''
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__socket.settimeout(5)
-        # self.__dst_addr = SERVER_ADDRESS
-        self.init_local_ip()
+        self.__init_local_ip()
         self.s_uuid = None # UUID for session
         self.readables = [self.__socket]
+        self.tun_fd = None
+        # self.__keep_alive()
+        self.keep_ask = MAX_KEEP_ASK
 
-    def init_local_ip(self):
+
+    def __init_local_ip(self):
         '''
         获取本机ip
         '''
         _socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _socket.connect(('8.8.8.8', 80))
         self.local_ip = _socket.getsockname()[0]
-        print('Local IP:', self.local_ip)
+        logging.info('Local IP:', self.local_ip)
         _socket.close()
 
-    def __request_login_msg(self):
+    def __keep_alive(self):
+        '''
+        子线程保持向服务端发送心跳包，以防止服务端清除会话断开隧道连接
+        '''
+        def _keepalive():
+            while True:
+                time.sleep(KEEPALIVE)
+                self.__request_down_msg()
+        c_t_1 = Thread(target=_keepalive, args=(), name='keep_alive')
+        c_t_1.setDaemon(True)
+        c_t_1.start()
+
+    def __keep_ask(self, keep: bool):
+        '''
+        keep_ask:
+        - 每次发包后置为10
+        - 每次收到空包-1
+        - 收包后+1
+        - 上限为10
+        '''
+        if keep and self.keep_ask < MAX_KEEP_ASK:
+            self.keep_ask += 1
+        elif not keep and self.keep_ask > 0:
+            self.keep_ask -= 1
+        logging.info("keep_ask = %d", self.keep_ask)
+
+    def __handle_login(self):
         '''
         连接服务端并配置代理隧道\n
         创建Tunfd\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain
         '''
         request = dns_handler.make_fake_request(HOST_NAME, UUID, LOGIN_MSG)
-        self.__socket.sendto(request, DOMAIN_NS_ADDR)        
+        # TODO: handle timeout Exception
+        self.__socket.sendto(request, DOMAIN_NS_ADDR)
+        response, _addr = self.__socket.recvfrom(2048)
+        while True:
+            try:
+                if self.__decode_login_msg(response):
+                    break
+                else:
+                    self.__socket.sendto(request, DOMAIN_NS_ADDR)
+            except AssertionError:
+                logging.info('Server Down or Not Detected Login Message')
+                time.sleep(1)
+                continue
+        logging.info('Connect to server successful')
 
-    def __request_up_msg(self, data:bytes):
+    def __request_up_msg(self, data: bytes):
         '''
         请求用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
         '''
@@ -99,23 +149,27 @@ class Client():
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.debug('Send data in DNS request')
         logging.debug(request)
+        # 发包后置为10
+        self.keep_ask = MAX_KEEP_ASK
 
     def __request_down_msg(self):
         '''
         请求用户下行数据 SESSION_UUID.DOWN.<RANDOM_UUID>.hostname.domain
         '''
         d_uuid = self.s_uuid+'.DOWN'
-        request = dns_handler.make_fake_request(HOST_NAME, d_uuid, str(UUID_GENERATOR.uuid1()).encode())
+        request = dns_handler.make_fake_request(HOST_NAME, d_uuid,
+                                                str(UUID_GENERATOR.uuid1()).encode())
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
 
-    def __decode_down_msg(self, response):
+    @staticmethod
+    def __decode_down_msg(response):
         '''
         解析用户下行数据
         '''
         txt_records = dns_handler.txt_from_dns_response(response)
         if len(txt_records) < 1:
             logging.debug('No TXT record in response')
-            return
+            return b''
         txt_record = txt_records[0]
         bytes_write = bytes.fromhex(txt_record)
         return bytes_write
@@ -124,6 +178,10 @@ class Client():
         '''
         解析用户登录响应
         '''
+        name_data = dns_handler.decode_dns_question(response)
+        if name_data[1] != LOGIN_MSG:
+            logging.debug('Not a Login response <%s>', name_data[1])
+            return False
         txt_records = dns_handler.txt_from_dns_response(response)
         assert len(txt_records) == 1
         txt_record = txt_records[0]
@@ -133,6 +191,7 @@ class Client():
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
         start_tunnel(tun_name, local_ip, peer_ip)
         logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
+        return True
 
     def __handle_dns_response(self, response):
         '''
@@ -140,47 +199,44 @@ class Client():
         '''
         name_data = dns_handler.decode_dns_question(response)
         if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-            logging.info('Connect to server successful')
-            self.__decode_login_msg(response)
+            logging.error('Ignore Server Response: Already Login')
             return
         if name_data[1] == DOWN_MSG:    # b'DOWN':
+            logging.debug('Receive Packet from server')
             bytes_write = self.__decode_down_msg(response)
             logging.debug(bytes_write)
-            if bytes_write is not None and len(bytes_write) > 20:
-                # Check if IPPacket
-                print(IPPacket.str_info(bytes_write))
-                os.write(self.tun_fd, bytes_write)
-            else:
-                time.sleep(0.1)
+            if bytes_write == CLOSED_SESSION_MSG:
+                # 重新登录
+                # - 关闭旧的session, 原地发起登录请求
+                logging.info('客户端掉线，重新登录')
+                # - 删除旧的文件描述符
+                os.close(self.readables[1])
+                self.readables = [self.__socket]
+                self.__handle_login()
                 pass
+            elif bytes_write is not None and len(bytes_write) > 20:
+                # Check if IPPacket
+                # logging.info(IPPacket.str_info(bytes_write))
+                os.write(self.tun_fd, bytes_write)
+                # 收到数据包后+1
+                self.__keep_ask(True)
+            else:
+                # 收到空包后-1
+                self.__keep_ask(False)
             return
         if name_data[1] == UP_MSG:      # b'UP'
             logging.error('Server Response Invalid Question')
             return
 
-    def run_forever(self):
+    def __handle_forwarding(self):
         '''
-        运行代理客户端
+        客户端登录后的转发行为
         '''
-        print('Start connect to server...')
-        self.__request_login_msg()
-        self.tun_fd = self.__socket
         while True:
-            try:
-                readable_fd = select(self.readables, [], [], 10)[0]
-            except KeyboardInterrupt:
-                # TODO: close the connection
-                raise KeyboardInterrupt
+            readable_fd = select(self.readables, [], [], 10)[0]
             for _fd in readable_fd:
                 if _fd == self.__socket:
-                    response, addr = self.__socket.recvfrom(2048)
-                    print('Header ID', struct.unpack('>H', response[:2]))
-                    try:
-                        d = DNSRecord()
-                        d.parse(response)
-                        print(d)
-                    except DNSError:
-                        pass
+                    response, _addr = self.__socket.recvfrom(2048)
                     self.__handle_dns_response(response)
                 else:
                     # 将从Tun拿到的IP包发送给代理服务器
@@ -188,8 +244,27 @@ class Client():
                     logging.debug('Get outbounding data from TUN')
                     self.__request_up_msg(ip_packet)
             # 发送心跳包，尝试接受数据
-            logging.debug('Try to receive data')
-            self.__request_down_msg()
+            if self.keep_ask > 0:
+                logging.debug('Try To Receive Data [%d]', self.keep_ask)
+                self.__request_down_msg()
+
+    def run_forever(self):
+        '''
+        运行代理客户端
+        '''
+        logging.info('Start connect to server...')
+        self.__handle_login()
+        while True:
+            try:
+                self.__handle_forwarding()
+            except SessionExpiredException:
+                logging.error('SessionExpiredException')
+                self.__handle_login()
+                # TODO: delect the expired tun_fd
+                continue
+            except KeyboardInterrupt:
+                # TODO: close the connection
+                raise KeyboardInterrupt
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
@@ -197,4 +272,4 @@ if __name__ == '__main__':
     try:
         Client().run_forever()
     except KeyboardInterrupt:
-        print('Closing vpn client ...')
+        logging.info('Closing vpn client ...')

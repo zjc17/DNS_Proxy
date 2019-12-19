@@ -4,10 +4,11 @@
 import time
 import os
 import struct
+import logging
 from fcntl import ioctl
 from ipaddress import ip_network
 import uuid as UUID_GENERATOR
-import logging
+from threading import Thread
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
@@ -17,7 +18,7 @@ LOCAL_IP = IPRANGE.pop(0)
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
-MTU = 1400
+MTU = 120
 USER_UUID = ['779ea091-ad7d-43bf-8afc-8b94fdb576bf']
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -95,18 +96,32 @@ class SessionManager:
     用户认证
     会话管理
     创建、维护虚拟网卡
+    TODO: 管理 IP 分配完毕的异常 （基本不需要考虑，甚至可以分配更大的range）
     '''
-    def __init__(self, timeout=100):
+    def __init__(self, timeout=30):
         '''
         初始化Session池
+        - __expired_s_uuid: 删除会话后记录uuid，避免误删除后客户端再次请求
         '''
         self.__session_pool = []
         self.__time_out = timeout
+        self.__del_expired_session()
+        self.readables = []
+        # TODO: 将过期session记录在文件里，防止服务器重启丢失
+        # TODO: 更好的刷新机制，否则这个列表会越来越长
+        # - 使用指定size的queue或许可以解决
+        # - 服务端对于无法找到统一发重新登录提示
+        # - 记录过期uuid访问次数，或者设置双重过期时间
+        # - 客户端一定次数无效后自动重新登陆
+        self.expired_s_uuid = []
 
     def get_session_from_uuid(self, uuid: str)->Session:
         '''
         从用户提供的Session UUID 获取 Session, 同时刷新Session
-        @return: Session or None
+        @return:
+            - Session: 合法，返回session
+            - True: 过期，提示重新登录
+            - False: invalid
         '''
         _count = 0
         for session in self.__session_pool:
@@ -116,8 +131,12 @@ class SessionManager:
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
             if session.uuid == uuid:
+                # fresh the session
+                session.fresh_session()
                 return session
-        return None
+        if uuid in self.expired_s_uuid:
+            return True
+        return False
 
     def get_session_from_tun_fd(self, tun_fd: str)->Session:
         '''
@@ -139,8 +158,8 @@ class SessionManager:
         '''
         认证用户提供的UUID(密码), 并创建Session
         assert MSG == b'LOGIN'
-        @return None: invalid user
-        @return session: 新建的Session
+        return None: invalid user
+        return session: 新建的Session
         '''
         if uuid not in USER_UUID:
             return None
@@ -151,13 +170,23 @@ class SessionManager:
         self.__session_pool.append(new_session)
         return new_session
 
-    def __del_time_out_session(self):
+    def __del_expired_session(self):
         '''
         删除过期session
-        TODO: 随初始化作为守护态子进程启动
         '''
-        time_del = time.time() + self.__time_out
-        for session in self.__session_pool:
-            if session.last_time > time_del:
-                self.__session_pool.remove(session)
-                logging.debug('Delete Time Out Session')
+        def _del_expired_session():
+            while True:
+                time.sleep(self.__time_out-10)
+                time_del = time.time() - self.__time_out
+                for session in self.__session_pool:
+                    if session.last_time < time_del:
+                        # 回收 IP, 添加回 IPRANGE 等待分配
+                        self.readables.remove(session.tun_fd)
+                        self.expired_s_uuid.append(session.uuid)
+                        os.close(session.tun_fd)
+                        IPRANGE.insert(0, session.tun_addr)
+                        self.__session_pool.remove(session)
+                        logging.info('Delete Time Out Session <%s>', session.uuid)
+        c_t_1 = Thread(target=_del_expired_session, args=(), name='del_expired_session')
+        c_t_1.setDaemon(True)
+        c_t_1.start()
