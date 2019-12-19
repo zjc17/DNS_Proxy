@@ -34,6 +34,8 @@ IFF_TAP = 0x0002
 LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
 DOWN_MSG = b'DOWN'      # 用户下行数据 SESSION_UUID.DOWN.hostname.domain
 UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
+CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
+MAX_KEEP_ASK = 3
 
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -72,13 +74,12 @@ class Client():
         '''
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__socket.settimeout(5)
-        # self.__dst_addr = SERVER_ADDRESS
         self.__init_local_ip()
         self.s_uuid = None # UUID for session
         self.readables = [self.__socket]
         self.tun_fd = None
-        self.__keep_alive()
-        self.keep_ask = 10
+        # self.__keep_alive()
+        self.keep_ask = MAX_KEEP_ASK
 
 
     def __init_local_ip(self):
@@ -88,7 +89,7 @@ class Client():
         _socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _socket.connect(('8.8.8.8', 80))
         self.local_ip = _socket.getsockname()[0]
-        print('Local IP:', self.local_ip)
+        logging.info('Local IP:', self.local_ip)
         _socket.close()
 
     def __keep_alive(self):
@@ -111,7 +112,7 @@ class Client():
         - 收包后+1
         - 上限为10
         '''
-        if keep and self.keep_ask < 10:
+        if keep and self.keep_ask < MAX_KEEP_ASK:
             self.keep_ask += 1
         elif not keep and self.keep_ask > 0:
             self.keep_ask -= 1
@@ -131,8 +132,11 @@ class Client():
             try:
                 if self.__decode_login_msg(response):
                     break
+                else:
+                    self.__socket.sendto(request, DOMAIN_NS_ADDR)
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
+                time.sleep(1)
                 continue
         logging.info('Connect to server successful')
 
@@ -146,7 +150,7 @@ class Client():
         logging.debug('Send data in DNS request')
         logging.debug(request)
         # 发包后置为10
-        self.keep_ask = 10
+        self.keep_ask = MAX_KEEP_ASK
 
     def __request_down_msg(self):
         '''
@@ -176,10 +180,9 @@ class Client():
         '''
         name_data = dns_handler.decode_dns_question(response)
         if name_data[1] != LOGIN_MSG:
-            logging.debug('Non a Login response')
+            logging.debug('Not a Login response <%s>', name_data[1])
             return False
         txt_records = dns_handler.txt_from_dns_response(response)
-        print(response)
         assert len(txt_records) == 1
         txt_record = txt_records[0]
         self.tun_fd, tun_name = create_tunnel()
@@ -202,9 +205,18 @@ class Client():
             logging.debug('Receive Packet from server')
             bytes_write = self.__decode_down_msg(response)
             logging.debug(bytes_write)
-            if bytes_write is not None and len(bytes_write) > 20:
+            if bytes_write == CLOSED_SESSION_MSG:
+                # 重新登录
+                # - 关闭旧的session, 原地发起登录请求
+                logging.info('客户端掉线，重新登录')
+                # - 删除旧的文件描述符
+                os.close(self.readables[1])
+                self.readables = [self.__socket]
+                self.__handle_login()
+                pass
+            elif bytes_write is not None and len(bytes_write) > 20:
                 # Check if IPPacket
-                print(IPPacket.str_info(bytes_write))
+                # logging.info(IPPacket.str_info(bytes_write))
                 os.write(self.tun_fd, bytes_write)
                 # 收到数据包后+1
                 self.__keep_ask(True)
@@ -240,7 +252,7 @@ class Client():
         '''
         运行代理客户端
         '''
-        print('Start connect to server...')
+        logging.info('Start connect to server...')
         self.__handle_login()
         while True:
             try:
@@ -260,4 +272,4 @@ if __name__ == '__main__':
     try:
         Client().run_forever()
     except KeyboardInterrupt:
-        print('Closing vpn client ...')
+        logging.info('Closing vpn client ...')
