@@ -4,10 +4,11 @@
 import time
 import os
 import struct
+import logging
 from fcntl import ioctl
 from ipaddress import ip_network
 import uuid as UUID_GENERATOR
-import logging
+from threading import Thread
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
@@ -96,12 +97,13 @@ class SessionManager:
     会话管理
     创建、维护虚拟网卡
     '''
-    def __init__(self, timeout=100):
+    def __init__(self, timeout=30):
         '''
         初始化Session池
         '''
         self.__session_pool = []
         self.__time_out = timeout
+        self.__del_expired_session()
 
     def get_session_from_uuid(self, uuid: str)->Session:
         '''
@@ -116,6 +118,8 @@ class SessionManager:
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
             if session.uuid == uuid:
+                # fresh the session
+                session.fresh_session()
                 return session
         return None
 
@@ -139,8 +143,8 @@ class SessionManager:
         '''
         认证用户提供的UUID(密码), 并创建Session
         assert MSG == b'LOGIN'
-        @return None: invalid user
-        @return session: 新建的Session
+        return None: invalid user
+        return session: 新建的Session
         '''
         if uuid not in USER_UUID:
             return None
@@ -151,13 +155,16 @@ class SessionManager:
         self.__session_pool.append(new_session)
         return new_session
 
-    def __del_time_out_session(self):
+    def __del_expired_session(self):
         '''
         删除过期session
-        TODO: 随初始化作为守护态子进程启动
         '''
-        time_del = time.time() + self.__time_out
-        for session in self.__session_pool:
-            if session.last_time > time_del:
-                self.__session_pool.remove(session)
-                logging.debug('Delete Time Out Session')
+        def _del_expired_session():
+            time_del = time.time() - self.__time_out
+            for session in self.__session_pool:
+                if session.last_time < time_del:
+                    self.__session_pool.remove(session)
+                    logging.info('Delete Time Out Session <%s>', session.uuid)
+        c_t_1 = Thread(target=_del_expired_session, args=(), name='del_expired_session')
+        c_t_1.setDaemon(True)
+        c_t_1.start()
