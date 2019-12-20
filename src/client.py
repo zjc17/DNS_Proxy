@@ -15,6 +15,7 @@ from threading import Thread
 from fcntl import ioctl
 from select import select
 from core import dns_handler
+from core.dns_handler import Decapsulator
 from core.packet import IPPacket
 
 logging.basicConfig(level=logging.DEBUG,
@@ -27,7 +28,7 @@ BUFFER_SIZE = 4096
 KEEPALIVE = 10
 DOMAIN_NS_IP = '120.78.166.34'
 HOST_NAME = 'group11.cs305.fun'
-HOST_NAME = 'www.ibbb.top'
+# HOST_NAME = 'www.ibbb.top'
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -35,7 +36,7 @@ LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
 DOWN_MSG = b'DOWN'      # 用户下行数据 SESSION_UUID.DOWN.hostname.domain
 UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
 CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
-MAX_KEEP_ASK = 3
+MAX_KEEP_ASK = 1
 
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -89,7 +90,7 @@ class Client():
         _socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _socket.connect(('8.8.8.8', 80))
         self.local_ip = _socket.getsockname()[0]
-        logging.info('Local IP:', self.local_ip)
+        logging.info('Local IP: %s', self.local_ip)
         _socket.close()
 
     def __keep_alive(self):
@@ -116,7 +117,6 @@ class Client():
             self.keep_ask += 1
         elif not keep and self.keep_ask > 0:
             self.keep_ask -= 1
-        logging.info("keep_ask = %d", self.keep_ask)
 
     def __handle_login(self):
         '''
@@ -127,6 +127,7 @@ class Client():
         request = dns_handler.make_fake_request(HOST_NAME, UUID, LOGIN_MSG)
         # TODO: handle timeout Exception
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
+        logging.info('Send data in DNS request')
         response, _addr = self.__socket.recvfrom(2048)
         while True:
             try:
@@ -134,45 +135,58 @@ class Client():
                     break
                 else:
                     self.__socket.sendto(request, DOMAIN_NS_ADDR)
+                    logging.info('Send data in DNS request')
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
+                self.__socket.sendto(request, DOMAIN_NS_ADDR)
                 time.sleep(1)
                 continue
         logging.info('Connect to server successful')
 
     def __request_up_msg(self, data: bytes):
         '''
-        请求用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
+        请求用户上行数据 SESSION_UUID.<UNIQUE_ID>.UP.$BYTE_DATA.hostname.domain
         '''
-        s_uuid = self.s_uuid+'.UP'
+        s_uuid = self.s_uuid+'.UP.'+ str(UUID_GENERATOR.uuid1())[:8]
         request = dns_handler.make_fake_request(HOST_NAME, s_uuid, data)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
-        logging.debug('Send data in DNS request')
+        logging.info('Send data in DNS request')
         logging.debug(request)
         # 发包后置为10
-        self.keep_ask = MAX_KEEP_ASK
+        # self.keep_ask = MAX_KEEP_ASK
+        # self.__request_down_msg()
+        self.__keep_ask(True)
 
     def __request_down_msg(self):
         '''
         请求用户下行数据 SESSION_UUID.DOWN.<RANDOM_UUID>.hostname.domain
         '''
+        time.sleep(0.01)
         d_uuid = self.s_uuid+'.DOWN'
+        r_uuid = str(UUID_GENERATOR.uuid1())
         request = dns_handler.make_fake_request(HOST_NAME, d_uuid,
-                                                str(UUID_GENERATOR.uuid1()).encode())
+                                                r_uuid.encode())
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
+        logging.info('Send DOWN MSG in DNS request %s', r_uuid)
+        logging.info(request)
 
     @staticmethod
     def __decode_down_msg(response):
         '''
         解析用户下行数据
         '''
-        txt_records = dns_handler.txt_from_dns_response(response)
-        if len(txt_records) < 1:
+        rdata = Decapsulator.get_txt_record(response)
+        if len(rdata) < 1:
             logging.debug('No TXT record in response')
             return b''
-        txt_record = txt_records[0]
-        bytes_write = bytes.fromhex(txt_record)
-        return bytes_write
+        return rdata
+        # txt_records = dns_handler.txt_from_dns_response(response)
+        # if len(txt_records) < 1:
+        #     logging.debug('No TXT record in response')
+        #     return b''
+        # txt_record = txt_records[0]
+        # bytes_write = bytes.fromhex(txt_record)
+        # return bytes_write
 
     def __decode_login_msg(self, response):
         '''
@@ -182,12 +196,24 @@ class Client():
         if name_data[1] != LOGIN_MSG:
             logging.debug('Not a Login response <%s>', name_data[1])
             return False
-        txt_records = dns_handler.txt_from_dns_response(response)
-        assert len(txt_records) == 1
-        txt_record = txt_records[0]
+        # txt_records = dns_handler.txt_from_dns_response(response)
+        # logging.debug('txt record: %s', txt_records)
+        # assert len(txt_records) == 1
+        # txt_record = txt_records[0]
+        try:
+            txt_record = Decapsulator.get_txt_record(response)
+            txt_record = txt_record.decode()
+        except UnicodeDecodeError:
+            logging.error('Wrong Login response: %s', txt_record)
+            time.sleep(1)
+            return False
         self.tun_fd, tun_name = create_tunnel()
         self.readables.append(self.tun_fd)
-        self.s_uuid, local_ip, peer_ip = txt_record.split(';')
+        _login_response = txt_record.split(';')
+        if len(_login_response) != 3:
+            logging.debug('Not a Login response <%s>', txt_record)
+            return False
+        self.s_uuid, local_ip, peer_ip = _login_response
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
         start_tunnel(tun_name, local_ip, peer_ip)
         logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
@@ -202,9 +228,8 @@ class Client():
             logging.error('Ignore Server Response: Already Login')
             return
         if name_data[1] == DOWN_MSG:    # b'DOWN':
-            logging.debug('Receive Packet from server')
+            logging.debug('Receive Packet from server %s', name_data[2][:8])
             bytes_write = self.__decode_down_msg(response)
-            logging.debug(bytes_write)
             if bytes_write == CLOSED_SESSION_MSG:
                 # 重新登录
                 # - 关闭旧的session, 原地发起登录请求
@@ -213,10 +238,11 @@ class Client():
                 os.close(self.readables[1])
                 self.readables = [self.__socket]
                 self.__handle_login()
-                pass
             elif bytes_write is not None and len(bytes_write) > 20:
                 # Check if IPPacket
                 # logging.info(IPPacket.str_info(bytes_write))
+                logging.debug('Write data into TUN')
+                logging.info(bytes_write)
                 os.write(self.tun_fd, bytes_write)
                 # 收到数据包后+1
                 self.__keep_ask(True)
@@ -225,7 +251,7 @@ class Client():
                 self.__keep_ask(False)
             return
         if name_data[1] == UP_MSG:      # b'UP'
-            logging.error('Server Response Invalid Question')
+            logging.debug('Server Response Invalid Question')
             return
 
     def __handle_forwarding(self):
@@ -244,8 +270,9 @@ class Client():
                     logging.debug('Get outbounding data from TUN')
                     self.__request_up_msg(ip_packet)
             # 发送心跳包，尝试接受数据
+            logging.debug('keep_ask = [%d]', self.keep_ask)
             if self.keep_ask > 0:
-                logging.debug('Try To Receive Data [%d]', self.keep_ask)
+                logging.info('Try To Receive Data [%d]', self.keep_ask)
                 self.__request_down_msg()
 
     def run_forever(self):
@@ -260,7 +287,6 @@ class Client():
             except SessionExpiredException:
                 logging.error('SessionExpiredException')
                 self.__handle_login()
-                # TODO: delect the expired tun_fd
                 continue
             except KeyboardInterrupt:
                 # TODO: close the connection
@@ -268,7 +294,10 @@ class Client():
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
-    DOMAIN_NS_ADDR = ('8.8.8.8', 53)
+    # DOMAIN_NS_ADDR = ('8.8.8.8', 53)
+    DOMAIN_NS_ADDR = ('18.162.114.192', 53)
+    # DOMAIN_NS_ADDR = ('18.162.51.192', 53) # 29 Kbps => 140kbps
+
     try:
         Client().run_forever()
     except KeyboardInterrupt:

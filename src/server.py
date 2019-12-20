@@ -8,6 +8,7 @@ import os
 import logging
 from dnslib.dns import DNSError
 from core import dns_handler
+from core.dns_handler import Encapsulator
 from core.session import SessionManager, LOCAL_IP
 # TODO 优化logging模块的使用 https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
 logging.basicConfig(level=logging.DEBUG,
@@ -17,7 +18,7 @@ BIND_ADDRESS = '0.0.0.0', 53
 BUFFER_SIZE = 4096
 LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
 DOWN_MSG = b'DOWN'      # 用户请求数据 SESSION_UUID.DOWN.hostname.domain
-UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname.domain
+UP_MSG = b'UP'          # 请求用户上行数据 SESSION_UUID.<UNIQUE_ID>.UP.$BYTE_DATA.hostname.domain
 CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
 SESSION_MANAGER = SessionManager(timeout=30)
 class Server:
@@ -36,6 +37,7 @@ class Server:
         '''
         self.__socket = socket(AF_INET, SOCK_DGRAM)
         self.__socket.bind(BIND_ADDRESS)
+        self.__duplicate_detected = []
         SESSION_MANAGER.readables = [self.__socket]
         print('Server listen on %s:%s...' % BIND_ADDRESS)
 
@@ -59,13 +61,12 @@ class Server:
             # TODO: reply sth to indicate no buffered data
             # TODO: check whether is IP packet
             packet = b''
-        reply = dns_handler.make_txt_response(request, packet.hex())
+        # reply = dns_handler.make_txt_response(request, packet.hex())
+        reply = Encapsulator.response_bytes_in_txt(request, packet)
         logging.debug('REPLY:')
         logging.debug(reply)
-        logging.error('Addr:')
-        logging.error(addr)
         self.__socket.sendto(reply, addr)
-        logging.debug('SEND BACK')
+        logging.info('SEND BACK %s', packet[:10])
         return True
 
     def __response_login_msg(self, request: bytes, data: list, addr: tuple)->bool:
@@ -87,8 +88,10 @@ class Server:
             return False
         logging.info('Clinet <%s> connect successful', session.uuid)
         try:
+            logging.error(session.uuid)
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
             reply = dns_handler.make_txt_response(request, txt_record)
+            logging.error(reply)
             self.__socket.sendto(reply, addr)
             SESSION_MANAGER.readables.append(session.tun_fd)
         except DNSError:
@@ -103,6 +106,8 @@ class Server:
         @return
             - True: 成功转发上行数据
             - False: 异常
+        请求用户上行数据\n
+        SESSION_UUID.<UNIQUE_ID>.UP.$BYTE_DATA.hostname.domain
         '''
         assert data[1] == UP_MSG
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
@@ -115,14 +120,26 @@ class Server:
             return False
         tun_fd = session.tun_fd
         # TODO: 将-3参数化
-        message = b''.join(data[2:-3])
+        message = b''.join(data[3:-3])
         try:
-            logging.debug('Try to send DATA(%d) to TUN', (len(message)))
+            logging.info('Try to send DATA(%d) to TUN', (len(message)))
             os.write(tun_fd, message)
         except OSError:
             logging.error('Fail to write DATA to TUN')
             return False
         return True
+    
+    def __drop_duplicate_request(self, unique_id: bytes):
+        '''
+        针对迭代查询的NS服务器可能重复暴力发包的情况，做一个列表记录匹配是否已经收到
+        '''
+        if len(self.__duplicate_detected) > 128:
+            self.__duplicate_detected.pop(0)
+        if unique_id in self.__duplicate_detected:
+            return True
+        self.__duplicate_detected.append(unique_id)
+        logging.info('len = %d', len(self.__duplicate_detected))
+        return False
 
     def __handle_dns_request(self, request: bytes, addr):
         '''
@@ -133,7 +150,7 @@ class Server:
         name_data = dns_handler.decode_dns_question(request)
         uuid = name_data[0].decode()
         try:
-            logging.info('UUID<%s>=>\n%s', uuid, name_data[1].decode())
+            logging.info('s_uuid<%s>=>\n%s', uuid, name_data[1].decode())
             # 相关预定义指令
             if name_data[1] == LOGIN_MSG:   # b'LOGIN':
                 self.__response_login_msg(request, name_data, addr)
@@ -142,6 +159,10 @@ class Server:
                 self.__response_down_msg(request, name_data, addr)
                 return
             if name_data[1] == UP_MSG:      # b'UP'
+                logging.info('UP UNIQUE ID = %s', name_data[2].decode())
+                if self.__drop_duplicate_request(name_data[2]):
+                    logging.debug('DUPLICATE PACKET RECEIVED AND DROPPED')
+                    return
                 self.response_up_msg(name_data, addr)
                 return
         except IndexError:

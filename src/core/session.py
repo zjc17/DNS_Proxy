@@ -18,7 +18,7 @@ LOCAL_IP = IPRANGE.pop(0)
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
-MTU = 120
+MTU = 250
 USER_UUID = ['779ea091-ad7d-43bf-8afc-8b94fdb576bf']
 def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
     '''
@@ -130,12 +130,14 @@ class SessionManager:
         assert _count < 2
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
+            logging.debug(session.uuid)
             if session.uuid == uuid:
                 # fresh the session
                 session.fresh_session()
                 return session
         if uuid in self.expired_s_uuid:
             return True
+        
         return False
 
     def get_session_from_tun_fd(self, tun_fd: str)->Session:
@@ -168,6 +170,7 @@ class SessionManager:
         start_tunnel(tun_name, tun_addr)
         new_session = Session(tun_fd, tun_addr, tun_name)
         self.__session_pool.append(new_session)
+        logging.error(new_session.uuid)
         return new_session
 
     def __del_expired_session(self):

@@ -60,6 +60,8 @@
 
         - `sudo iptables -D FORWARD 1`
 
+7. 配置`Socks5`代理: `ssh -D 127.0.0.1:8080 jiachen@10.0.0.1`
+
 工具
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
