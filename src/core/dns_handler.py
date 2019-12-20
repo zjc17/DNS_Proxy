@@ -66,39 +66,6 @@ def put_bytes_into_txtrecord(data, bytes_record):
     reply.add_answer(RR(qname, qtype, rdata=TXT(bytes_record)))
     return reply.pack()
 
-def __split_with_length(data: bytes, length: int = 63):
-    data_segments = []
-    _idx = 0
-    _len = len(data)
-    while True:
-        if _idx + length >= _len:
-            data_segments.append(data[_idx: _len])
-            break
-        data_segments.append(data[_idx: _idx+length])
-        _idx += length
-    return data_segments
-
-
-
-def make_fake_request(host_name, uuid:str, data):
-    '''
-    进行伪装查询
-     0        12     49
-    | header | UUID |
-    '''
-    assert len(data) <= 63*3
-    data_segments = __split_with_length(data, 63)
-    request_msg = DNSRecord()
-    request_msg.add_question(DNSQuestion(uuid+'.'+host_name, QTYPE.TXT))
-    request_data = request_msg.pack()
-    _idx = 13 + len(uuid)
-    modified_data = request_data[:_idx]
-    for data_seg in data_segments:
-        data_len = struct.pack('>B', len(data_seg))
-        modified_data += data_len + data_seg
-    modified_data += request_data[_idx:]
-    return modified_data
-
 def txt_from_dns_response(response):
     '''
     从DNS响应获取TXT记录
@@ -154,6 +121,39 @@ class Encapsulator:
         reply += data
         return reply
 
+    @staticmethod
+    def __split_with_length(data: bytes, length: int = 63):
+        data_segments = []
+        _idx = 0
+        _len = len(data)
+        while True:
+            if _idx + length >= _len:
+                data_segments.append(data[_idx: _len])
+                break
+            data_segments.append(data[_idx: _idx+length])
+            _idx += length
+        return data_segments
+    
+    @staticmethod
+    def make_fake_request(uuid: str, data, host_name):
+        '''
+        进行伪装查询
+        0        12     49
+        | header | UUID |
+        '''
+        assert len(data) <= 63*3
+        data_segments = Encapsulator.__split_with_length(data, 63)
+        request_msg = DNSRecord()
+        request_msg.add_question(DNSQuestion(uuid+'.'+host_name, QTYPE.TXT))
+        request_data = request_msg.pack()
+        _idx = 13 + len(uuid)
+        modified_data = request_data[:_idx]
+        for data_seg in data_segments:
+            data_len = struct.pack('>B', len(data_seg))
+            modified_data += data_len + data_seg
+        modified_data += request_data[_idx:]
+        return modified_data
+
 class Decapsulator:
     '''
     解析DNS数据包
@@ -177,29 +177,29 @@ class Decapsulator:
             q_name.append(packet[_idx: packet[_idx-1]+_idx])
             _idx += packet[_idx-1]
         return q_name
-    
+
+    @staticmethod
     def get_txt_record(packet: bytes)->bytes:
         '''
         传入DNS数据包，解析TXT记录
+        Header 12 byte
+        Question Qname + Qtype(2 byte) + Qclass (2 byte)
         '''
-        # Header 12 byte
-        _header = packet[:12]
-        # Question Qname + Qtype(2 byte) + Qclass (2byte)
-        packet = packet[12:]
+        assert isinstance(packet, bytes)
         q_name = []
-        _idx = 0
+        _idx = 12
         while packet[_idx] > 0:
             _idx += 1
             q_name.append(packet[_idx: packet[_idx-1]+_idx])
             _idx += packet[_idx-1]
-        q_type, q_class = struct.unpack('>HH', packet[_idx+1: _idx+5])
-        packet = packet[_idx+5:]
-        r_name = packet[:2]
+        _q_type, _q_class = struct.unpack('>HH', packet[_idx+1: _idx+5])
+        answer = packet[_idx+5:]
+        _r_name = packet[:2]
         if len(packet) < 10:
             # TODO: 基于包结构验证
             return b''
-        r_type, r_class, r_ttl, r_dlength = struct.unpack('>HHIH', packet[2: 12])
-        rdata = packet[12:]
+        _r_type, _r_class, _r_ttl, _r_dlength = struct.unpack('>HHIH', answer[2: 12])
+        rdata = answer[12:]
         # print(r_type, r_class, r_ttl, r_dlength)
         return rdata[1:rdata[0]+1]
 

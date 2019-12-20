@@ -15,7 +15,7 @@ from threading import Thread
 from fcntl import ioctl
 from select import select
 from core import dns_handler
-from core.dns_handler import Decapsulator
+from core.dns_handler import Decapsulator, Encapsulator
 from core.packet import IPPacket
 
 logging.basicConfig(level=logging.DEBUG,
@@ -124,7 +124,7 @@ class Client():
         创建Tunfd\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain
         '''
-        request = dns_handler.make_fake_request(HOST_NAME, UUID, LOGIN_MSG)
+        request = Encapsulator.make_fake_request(UUID, LOGIN_MSG, HOST_NAME)
         # TODO: handle timeout Exception
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send data in DNS request')
@@ -148,13 +148,10 @@ class Client():
         请求用户上行数据 SESSION_UUID.<UNIQUE_ID>.UP.$BYTE_DATA.hostname.domain
         '''
         s_uuid = self.s_uuid+'.UP.'+ str(UUID_GENERATOR.uuid1())[:8]
-        request = dns_handler.make_fake_request(HOST_NAME, s_uuid, data)
+        request = Encapsulator.make_fake_request(s_uuid, data, HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send data in DNS request')
         logging.debug(request)
-        # 发包后置为10
-        # self.keep_ask = MAX_KEEP_ASK
-        # self.__request_down_msg()
         self.__keep_ask(True)
 
     def __request_down_msg(self):
@@ -164,8 +161,7 @@ class Client():
         time.sleep(0.01)
         d_uuid = self.s_uuid+'.DOWN'
         r_uuid = str(UUID_GENERATOR.uuid1())
-        request = dns_handler.make_fake_request(HOST_NAME, d_uuid,
-                                                r_uuid.encode())
+        request = Encapsulator.make_fake_request(d_uuid, r_uuid.encode(), HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send DOWN MSG in DNS request %s', r_uuid)
         logging.info(request)
@@ -180,13 +176,6 @@ class Client():
             logging.debug('No TXT record in response')
             return b''
         return rdata
-        # txt_records = dns_handler.txt_from_dns_response(response)
-        # if len(txt_records) < 1:
-        #     logging.debug('No TXT record in response')
-        #     return b''
-        # txt_record = txt_records[0]
-        # bytes_write = bytes.fromhex(txt_record)
-        # return bytes_write
 
     def __decode_login_msg(self, response):
         '''
@@ -196,10 +185,6 @@ class Client():
         if name_data[1] != LOGIN_MSG:
             logging.debug('Not a Login response <%s>', name_data[1])
             return False
-        # txt_records = dns_handler.txt_from_dns_response(response)
-        # logging.debug('txt record: %s', txt_records)
-        # assert len(txt_records) == 1
-        # txt_record = txt_records[0]
         try:
             txt_record = Decapsulator.get_txt_record(response)
             txt_record = txt_record.decode()
