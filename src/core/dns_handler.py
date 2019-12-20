@@ -50,13 +50,8 @@ def make_txt_response(data, txt_record):
     # print('REQUEST:\n', request)
     qname = request.q.qname
     qtype = request.q.qtype
-    if qtype == QTYPE.TXT:
-        reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-        reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
-        # reply.add_answer(RR(qname, qtype, rdata=TXT('TEST MSG')))
-    elif qtype == QTYPE.CNAME:
-        reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-        reply.add_answer(RR(qname, qtype, rdata=CNAME('CNAME RECORD HERE')))
+    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
+    reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
     return reply.pack()
 
 def put_bytes_into_txtrecord(data, bytes_record):
@@ -120,38 +115,6 @@ def txt_from_dns_response(response):
     return ''
 
 # DNSQuestion:https://juejin.im/post/5ab719c151882577b45ef9d9
-class Decapsulator:
-    '''
-    解析DNS数据包
-    '''
-    TXT = 16
-    IN = 1
-    @staticmethod
-    def get_host_name(packet: bytes)->list:
-        '''
-        传入DNS数据包，解析主机名
-        '''
-        # Header 12 byte
-        _header = packet[:12]
-        # Question Qname + Qtype(2 byte) + Qclass (2byte)
-        packet = packet[12:]
-        q_name = []
-        _idx = 0
-        while packet[_idx] > 0:
-            _idx += 1
-            print(_idx, packet[_idx: packet[_idx-1]+_idx])
-            q_name.append(packet[_idx: packet[_idx-1]+_idx])
-            _idx += packet[_idx-1]
-        q_type, q_class = struct.unpack('>HH', packet[_idx+1: _idx+5])
-        print(q_name, q_type, q_class)
-        packet = packet[_idx+5:]
-        r_name = packet[:2]
-        r_type, r_class, r_ttl, r_dlength = struct.unpack('>HHIH', packet[2: 12])
-        print(r_type, r_class, r_ttl, r_dlength)
-        rdata = packet[12:]
-        print(rdata)
-        assert len(rdata) == rdata[0] + 1
-        return q_name
 
 
 class Encapsulator:
@@ -181,40 +144,37 @@ class Encapsulator:
         return: bytes
         '''
         assert len(data) < 256
-        print('\n======================================\n')
         request = DNSRecord.parse(request)
-        print('REQUEST:\n', request)
         qname = request.q.qname
         qtype = request.q.qtype
-        print('QNAME:', qname)
         reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
         reply.add_answer(RR(qname, qtype, rdata=TXT('')))
-        print('RESPONSE:\n', reply)
         reply = reply.pack()
         reply[-3:-1] = struct.pack('>H', len(data) + 1)
         reply[-1] = len(data)
-        print(struct.unpack('H', reply[-3:-1]))
         reply += data
         return reply
 
 if __name__ == '__main__':
     from socket import socket, AF_INET, SOCK_DGRAM
     import os
-    os.popen('systemctl stop systemd-resolved').read()
-    _r = b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    # os.popen('systemctl stop systemd-resolved').read()
+    DATA = b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    DATA = b'\x00\x00\x08\x00E\x00\x00T\xab\xa9\x00\x00@\x01\xba\xfd\n\x00\x00\x01\n\x00\x00\x02\x00\x00\x01\x1a^K\x01\xb3rx\xfc]\x00\x00\x00\x00g>\n\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567'
     import uuid
-    _r = uuid.uuid1().bytes
-    print(_r)
-    print(len(_r))
+    DATA = str(uuid.uuid1()).encode()
+    print(DATA)
+    print(len(DATA))
     try:
         while True:
             SOCKET = socket(AF_INET, SOCK_DGRAM)
             SOCKET.bind(('0.0.0.0', 53))
             REQUEST, ADDR = SOCKET.recvfrom(1024)
-            RESPONSE = Encapsulator.response_bytes_in_txt(REQUEST, _r)
+            RESPONSE = Encapsulator.response_bytes_in_txt(REQUEST, DATA)
             # RESPONSE = Encapsulator.response_str_in_txt(REQUEST, b'TXT_RECORD')
             print(RESPONSE)
-            Decapsulator.get_host_name(RESPONSE)
+            # Decapsulator.get_host_name(RESPONSE)
             SOCKET.sendto(RESPONSE, ADDR)
     except (KeyboardInterrupt):
-        os.popen('systemctl start systemd-resolved').read()
+        # os.popen('systemctl start systemd-resolved').read()
+        pass

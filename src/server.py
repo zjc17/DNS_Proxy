@@ -8,9 +8,10 @@ import os
 import logging
 from dnslib.dns import DNSError
 from core import dns_handler
+from core.dns_handler import Encapsulator
 from core.session import SessionManager, LOCAL_IP
 # TODO 优化logging模块的使用 https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
 BIND_ADDRESS = '0.0.0.0', 53
@@ -60,13 +61,12 @@ class Server:
             # TODO: reply sth to indicate no buffered data
             # TODO: check whether is IP packet
             packet = b''
-        reply = dns_handler.make_txt_response(request, packet.hex())
+        # reply = dns_handler.make_txt_response(request, packet.hex())
+        reply = Encapsulator.response_bytes_in_txt(request, packet)
         logging.debug('REPLY:')
-        # logging.debug(reply)
-        logging.error('Addr:')
-        # logging.error(addr)
+        logging.debug(reply)
         self.__socket.sendto(reply, addr)
-        logging.info('SEND BACK %s', packet[:20])
+        logging.info('SEND BACK %s', packet[:10])
         return True
 
     def __response_login_msg(self, request: bytes, data: list, addr: tuple)->bool:
@@ -88,8 +88,10 @@ class Server:
             return False
         logging.info('Clinet <%s> connect successful', session.uuid)
         try:
+            logging.error(session.uuid)
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
             reply = dns_handler.make_txt_response(request, txt_record)
+            logging.error(reply)
             self.__socket.sendto(reply, addr)
             SESSION_MANAGER.readables.append(session.tun_fd)
         except DNSError:
@@ -120,7 +122,7 @@ class Server:
         # TODO: 将-3参数化
         message = b''.join(data[3:-3])
         try:
-            logging.debug('Try to send DATA(%d) to TUN', (len(message)))
+            logging.info('Try to send DATA(%d) to TUN', (len(message)))
             os.write(tun_fd, message)
         except OSError:
             logging.error('Fail to write DATA to TUN')
