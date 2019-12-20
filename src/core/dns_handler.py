@@ -120,3 +120,56 @@ def txt_from_dns_response(response):
     return ''
 
 # DNSQuestion:https://juejin.im/post/5ab719c151882577b45ef9d9
+class Decapsulator:
+    '''
+    解析DNS数据包
+    '''
+    TXT = 16
+    IN = 1
+    @staticmethod
+    def get_host_name(packet: bytes)->list:
+        '''
+        传入DNS数据包，解析主机名
+        '''
+        # Header 12 byte
+        _header = packet[:12]
+        # Question Qname + Qtype(2 byte) + Qclass (2byte)
+        packet = packet[12:]
+        q_name = []
+        _idx = 0
+        while packet[_idx] > 0:
+            _idx += 1
+            print(_idx, packet[_idx: packet[_idx-1]+_idx])
+            q_name.append(packet[_idx: packet[_idx-1]+_idx])
+            _idx += packet[_idx-1]
+        return q_name
+    
+    def get_txt_record(packet: bytes)->bytes:
+        '''
+        传入DNS数据包，解析TXT记录
+        '''
+        # Header 12 byte
+        _header = packet[:12]
+        # Question Qname + Qtype(2 byte) + Qclass (2byte)
+        packet = packet[12:]
+        q_name = []
+        _idx = 0
+        while packet[_idx] > 0:
+            _idx += 1
+            q_name.append(packet[_idx: packet[_idx-1]+_idx])
+            _idx += packet[_idx-1]
+        q_type, q_class = struct.unpack('>HH', packet[_idx+1: _idx+5])
+        packet = packet[_idx+5:]
+        r_name = packet[:2]
+        if len(packet) < 10:
+            # TODO: 基于包结构验证
+            return b''
+        r_type, r_class, r_ttl, r_dlength = struct.unpack('>HHIH', packet[2: 12])
+        rdata = packet[12:]
+        # print(r_type, r_class, r_ttl, r_dlength)
+        return rdata[1:rdata[0]+1]
+
+if __name__ == '__main__':
+    DATA = b'\xe2\x80\x85\x80\x00\x01\x00\x01\x00\x00\x00\x00$779ea091-ad7d-43bf-8afc-8b94fdb576bf\x05LOGIN\x03www\x04ibbb\x03top\x00\x00\x10\x00\x01\xc0\x0c\x00\x10\x00\x01\x00\x00\x00\x00\x00762752af9e-2306-11ea-9320-00163e0cae2e;10.0.0.2;10.0.0.1'
+    print(len('2752af9e-2306-11ea-9320-00163e0cae2e;10.0.0.2;10.0.0.1'))
+    print(Decapsulator.get_txt_record(DATA))
