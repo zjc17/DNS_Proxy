@@ -15,9 +15,10 @@ from threading import Thread
 from fcntl import ioctl
 from select import select
 from core import dns_handler
+from core.dns_handler import Decapsulator
 from core.packet import IPPacket
 
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
 
@@ -137,6 +138,7 @@ class Client():
                     logging.info('Send data in DNS request')
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
+                self.__socket.sendto(request, DOMAIN_NS_ADDR)
                 time.sleep(1)
                 continue
         logging.info('Connect to server successful')
@@ -166,19 +168,25 @@ class Client():
                                                 r_uuid.encode())
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send DOWN MSG in DNS request %s', r_uuid)
+        logging.info(request)
 
     @staticmethod
     def __decode_down_msg(response):
         '''
         解析用户下行数据
         '''
-        txt_records = dns_handler.txt_from_dns_response(response)
-        if len(txt_records) < 1:
+        rdata = Decapsulator.get_txt_record(response)
+        if len(rdata) < 1:
             logging.debug('No TXT record in response')
             return b''
-        txt_record = txt_records[0]
-        bytes_write = bytes.fromhex(txt_record)
-        return bytes_write
+        return rdata
+        # txt_records = dns_handler.txt_from_dns_response(response)
+        # if len(txt_records) < 1:
+        #     logging.debug('No TXT record in response')
+        #     return b''
+        # txt_record = txt_records[0]
+        # bytes_write = bytes.fromhex(txt_record)
+        # return bytes_write
 
     def __decode_login_msg(self, response):
         '''
@@ -188,12 +196,24 @@ class Client():
         if name_data[1] != LOGIN_MSG:
             logging.debug('Not a Login response <%s>', name_data[1])
             return False
-        txt_records = dns_handler.txt_from_dns_response(response)
-        assert len(txt_records) == 1
-        txt_record = txt_records[0]
+        # txt_records = dns_handler.txt_from_dns_response(response)
+        # logging.debug('txt record: %s', txt_records)
+        # assert len(txt_records) == 1
+        # txt_record = txt_records[0]
+        try:
+            txt_record = Decapsulator.get_txt_record(response)
+            txt_record = txt_record.decode()
+        except UnicodeDecodeError:
+            logging.error('Wrong Login response: %s', txt_record)
+            time.sleep(1)
+            return False
         self.tun_fd, tun_name = create_tunnel()
         self.readables.append(self.tun_fd)
-        self.s_uuid, local_ip, peer_ip = txt_record.split(';')
+        _login_response = txt_record.split(';')
+        if len(_login_response) != 3:
+            logging.debug('Not a Login response <%s>', txt_record)
+            return False
+        self.s_uuid, local_ip, peer_ip = _login_response
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
         start_tunnel(tun_name, local_ip, peer_ip)
         logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
@@ -208,8 +228,7 @@ class Client():
             logging.error('Ignore Server Response: Already Login')
             return
         if name_data[1] == DOWN_MSG:    # b'DOWN':
-            logging.debug('Receive Packet from server %s', name_data[2])
-
+            logging.debug('Receive Packet from server %s', name_data[2][:8])
             bytes_write = self.__decode_down_msg(response)
             if bytes_write == CLOSED_SESSION_MSG:
                 # 重新登录
@@ -226,11 +245,9 @@ class Client():
                 logging.info(bytes_write)
                 os.write(self.tun_fd, bytes_write)
                 # 收到数据包后+1
-                logging.debug('+')
                 self.__keep_ask(True)
             else:
                 # 收到空包后-1
-                logging.debug('-')
                 self.__keep_ask(False)
             return
         if name_data[1] == UP_MSG:      # b'UP'
@@ -277,9 +294,9 @@ class Client():
 
 if __name__ == '__main__':
     DOMAIN_NS_ADDR = ('120.78.166.34', 53)
-    DOMAIN_NS_ADDR = ('8.8.8.8', 53)
+    # DOMAIN_NS_ADDR = ('8.8.8.8', 53)
     DOMAIN_NS_ADDR = ('18.162.114.192', 53)
-    # DOMAIN_NS_ADDR = ('18.162.51.192', 53) # 29 Kbps
+    # DOMAIN_NS_ADDR = ('18.162.51.192', 53) # 29 Kbps => 140kbps
 
     try:
         Client().run_forever()
