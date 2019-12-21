@@ -119,6 +119,7 @@ class SessionManager:
                 return session
         if uuid in self.expired_s_uuid:
             return True
+        
         return False
 
     def get_session_from_tun_fd(self, tun_fd: str)->Session:
