@@ -139,6 +139,18 @@ class Server:
         logging.info('len = %d', len(self.__duplicate_detected))
         return False
 
+    def __drop_duplicate_request(self, unique_id: bytes):
+        '''
+        针对迭代查询的NS服务器可能重复暴力发包的情况，做一个列表记录匹配是否已经收到
+        '''
+        if len(self.__duplicate_detected) > 128:
+            self.__duplicate_detected.pop(0)
+        if unique_id in self.__duplicate_detected:
+            return True
+        self.__duplicate_detected.append(unique_id)
+        logging.info('len = %d', len(self.__duplicate_detected))
+        return False
+
     def __handle_dns_request(self, request: bytes, addr):
         '''
         处理绑定53接口的UDP服务器数据
