@@ -9,14 +9,11 @@ import logging
 import time
 import os
 import socket
-import struct
 import uuid as UUID_GENERATOR
 from threading import Thread
-from fcntl import ioctl
 from select import select
-from core import dns_handler
-from core.dns_handler import Decapsulator
-from core.packet import IPPacket
+from core.dns_handler import Decapsulator, Encapsulator
+from core.sys_manage import TunManager
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
@@ -38,23 +35,7 @@ UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname
 CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
 MAX_KEEP_ASK = 1
 
-def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
-    '''
-    创建隧道
-    '''
-    tunfd = os.open("/dev/net/tun", os.O_RDWR)
-    ifn = ioctl(tunfd, TUNSETIFF, struct.pack(
-        b"16sH", tun_name.encode(), tun_mode))
-    tun_name = ifn[:16].decode().strip("\x00")
-    return tunfd, tun_name
 
-
-def start_tunnel(tun_name, local_ip, peer_ip):
-    '''
-    配置隧道并启动
-    '''
-    os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
-             (tun_name, local_ip, peer_ip, MTU)).read()
 
 class SessionExpiredException(Exception):
     '''
@@ -75,7 +56,7 @@ class Client():
         '''
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__socket.settimeout(5)
-        self.__init_local_ip()
+        self.init_local_ip()
         self.s_uuid = None # UUID for session
         self.readables = [self.__socket]
         self.tun_fd = None
@@ -83,7 +64,7 @@ class Client():
         self.keep_ask = MAX_KEEP_ASK
 
 
-    def __init_local_ip(self):
+    def init_local_ip(self):
         '''
         获取本机ip
         '''
@@ -123,24 +104,21 @@ class Client():
         连接服务端并配置代理隧道\n
         创建Tunfd\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain
+        持续登录，失败后等待3秒，知道登录为止
         '''
-        request = dns_handler.make_fake_request(HOST_NAME, UUID, LOGIN_MSG)
-        # TODO: handle timeout Exception
-        self.__socket.sendto(request, DOMAIN_NS_ADDR)
-        logging.info('Send data in DNS request')
-        response, _addr = self.__socket.recvfrom(2048)
+        request = Encapsulator.make_fake_request(UUID, LOGIN_MSG, HOST_NAME)
         while True:
+            self.__socket.sendto(request, DOMAIN_NS_ADDR)
+            logging.info('Send data in DNS request')
+            response, _addr = self.__socket.recvfrom(2048)
             try:
                 if self.__decode_login_msg(response):
                     break
-                else:
-                    self.__socket.sendto(request, DOMAIN_NS_ADDR)
-                    logging.info('Send data in DNS request')
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
-                self.__socket.sendto(request, DOMAIN_NS_ADDR)
-                time.sleep(1)
                 continue
+            logging.info('Login Failed, Try later')
+            time.sleep(3)
         logging.info('Connect to server successful')
 
     def __request_up_msg(self, data: bytes):
@@ -148,13 +126,10 @@ class Client():
         请求用户上行数据 SESSION_UUID.<UNIQUE_ID>.UP.$BYTE_DATA.hostname.domain
         '''
         s_uuid = self.s_uuid+'.UP.'+ str(UUID_GENERATOR.uuid1())[:8]
-        request = dns_handler.make_fake_request(HOST_NAME, s_uuid, data)
+        request = Encapsulator.make_fake_request(s_uuid, data, HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send data in DNS request')
         logging.debug(request)
-        # 发包后置为10
-        # self.keep_ask = MAX_KEEP_ASK
-        # self.__request_down_msg()
         self.__keep_ask(True)
 
     def __request_down_msg(self):
@@ -164,8 +139,7 @@ class Client():
         time.sleep(0.01)
         d_uuid = self.s_uuid+'.DOWN'
         r_uuid = str(UUID_GENERATOR.uuid1())
-        request = dns_handler.make_fake_request(HOST_NAME, d_uuid,
-                                                r_uuid.encode())
+        request = Encapsulator.make_fake_request(d_uuid, r_uuid.encode(), HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
         logging.info('Send DOWN MSG in DNS request %s', r_uuid)
         logging.info(request)
@@ -180,26 +154,15 @@ class Client():
             logging.debug('No TXT record in response')
             return b''
         return rdata
-        # txt_records = dns_handler.txt_from_dns_response(response)
-        # if len(txt_records) < 1:
-        #     logging.debug('No TXT record in response')
-        #     return b''
-        # txt_record = txt_records[0]
-        # bytes_write = bytes.fromhex(txt_record)
-        # return bytes_write
 
     def __decode_login_msg(self, response):
         '''
         解析用户登录响应
         '''
-        name_data = dns_handler.decode_dns_question(response)
+        name_data = Decapsulator.get_host_name(response)
         if name_data[1] != LOGIN_MSG:
             logging.debug('Not a Login response <%s>', name_data[1])
             return False
-        # txt_records = dns_handler.txt_from_dns_response(response)
-        # logging.debug('txt record: %s', txt_records)
-        # assert len(txt_records) == 1
-        # txt_record = txt_records[0]
         try:
             txt_record = Decapsulator.get_txt_record(response)
             txt_record = txt_record.decode()
@@ -207,7 +170,7 @@ class Client():
             logging.error('Wrong Login response: %s', txt_record)
             time.sleep(1)
             return False
-        self.tun_fd, tun_name = create_tunnel()
+        self.tun_fd, tun_name = TunManager.create_tunnel()
         self.readables.append(self.tun_fd)
         _login_response = txt_record.split(';')
         if len(_login_response) != 3:
@@ -215,7 +178,7 @@ class Client():
             return False
         self.s_uuid, local_ip, peer_ip = _login_response
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
-        start_tunnel(tun_name, local_ip, peer_ip)
+        TunManager.start_tunnel(tun_name, local_ip, peer_ip, MTU)
         logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
         return True
 
@@ -223,7 +186,7 @@ class Client():
         '''
         处理UDP客户端接受的
         '''
-        name_data = dns_handler.decode_dns_question(response)
+        name_data = Decapsulator.get_host_name(response)
         if name_data[1] == LOGIN_MSG:   # b'LOGIN':
             logging.error('Ignore Server Response: Already Login')
             return
@@ -237,8 +200,8 @@ class Client():
                 # - 删除旧的文件描述符
                 os.close(self.readables[1])
                 self.readables = [self.__socket]
-                self.__handle_login()
-            elif bytes_write is not None and len(bytes_write) > 20:
+                raise SessionExpiredException
+            if bytes_write is not None and len(bytes_write) > 20:
                 # Check if IPPacket
                 # logging.info(IPPacket.str_info(bytes_write))
                 logging.debug('Write data into TUN')

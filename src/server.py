@@ -7,8 +7,7 @@ from select import select
 import os
 import logging
 from dnslib.dns import DNSError
-from core import dns_handler
-from core.dns_handler import Encapsulator
+from core.dns_handler import Encapsulator, Decapsulator
 from core.session import SessionManager, LOCAL_IP
 # TODO 优化logging模块的使用 https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
 logging.basicConfig(level=logging.DEBUG,
@@ -61,7 +60,6 @@ class Server:
             # TODO: reply sth to indicate no buffered data
             # TODO: check whether is IP packet
             packet = b''
-        # reply = dns_handler.make_txt_response(request, packet.hex())
         reply = Encapsulator.response_bytes_in_txt(request, packet)
         logging.debug('REPLY:')
         logging.debug(reply)
@@ -90,7 +88,7 @@ class Server:
         try:
             logging.error(session.uuid)
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
-            reply = dns_handler.make_txt_response(request, txt_record)
+            reply = Encapsulator.response_str_in_txt(request, txt_record)
             logging.error(reply)
             self.__socket.sendto(reply, addr)
             SESSION_MANAGER.readables.append(session.tun_fd)
@@ -128,7 +126,7 @@ class Server:
             logging.error('Fail to write DATA to TUN')
             return False
         return True
-    
+
     def __drop_duplicate_request(self, unique_id: bytes):
         '''
         针对迭代查询的NS服务器可能重复暴力发包的情况，做一个列表记录匹配是否已经收到
@@ -147,7 +145,7 @@ class Server:
         - DNS 请求检测
         - 新会话创建
         '''
-        name_data = dns_handler.decode_dns_question(request)
+        name_data = Decapsulator.get_host_name(request)
         uuid = name_data[0].decode()
         try:
             logging.info('s_uuid<%s>=>\n%s', uuid, name_data[1].decode())
