@@ -3,12 +3,11 @@
 '''
 import time
 import os
-import struct
 import logging
-from fcntl import ioctl
 from ipaddress import ip_network
 import uuid as UUID_GENERATOR
 from threading import Thread
+from core.sys_manage import TunManager
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
@@ -18,25 +17,8 @@ LOCAL_IP = IPRANGE.pop(0)
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
-MTU = 120
+MTU = 250
 USER_UUID = ['779ea091-ad7d-43bf-8afc-8b94fdb576bf']
-def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
-    '''
-    创建隧道
-    '''
-    tunfd = os.open("/dev/net/tun", os.O_RDWR)
-    ifn = ioctl(tunfd, TUNSETIFF, struct.pack(
-        b"16sH", tun_name.encode(), tun_mode))
-    tun_name = ifn[:16].decode().strip("\x00")
-    return tunfd, tun_name
-
-
-def start_tunnel(tun_name, peer_ip):
-    '''
-    配置隧道并启动
-    '''
-    os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
-             (tun_name, LOCAL_IP, peer_ip, MTU)).read()
 
 class Session:
     '''
@@ -130,6 +112,7 @@ class SessionManager:
         assert _count < 2
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
+            logging.debug(session.uuid)
             if session.uuid == uuid:
                 # fresh the session
                 session.fresh_session()
@@ -163,11 +146,12 @@ class SessionManager:
         '''
         if uuid not in USER_UUID:
             return None
-        tun_fd, tun_name = create_tunnel()
+        tun_fd, tun_name = TunManager.create_tunnel()
         tun_addr = IPRANGE.pop(0)
-        start_tunnel(tun_name, tun_addr)
+        TunManager.start_tunnel(tun_name, LOCAL_IP, tun_addr, MTU)
         new_session = Session(tun_fd, tun_addr, tun_name)
         self.__session_pool.append(new_session)
+        logging.error(new_session.uuid)
         return new_session
 
     def __del_expired_session(self):

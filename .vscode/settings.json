@@ -4,7 +4,6 @@
     "python.linting.pylintEnabled": true,
     "python.linting.pylintArgs": [
         "--disable=E0611",  // no name in module
-        "--disable=W0511"   // TODO
-        // "--disable=W,C"
+        "--disable=W0511",  // TODO
     ]
 }
