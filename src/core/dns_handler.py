@@ -2,84 +2,9 @@
 '''
 DNS 相关操作
 '''
-import re
 import struct
 from dnslib import (DNSRecord, DNSHeader, DNSQuestion,
-                    QTYPE, RR, A, MX, TXT, CNAME)
-from dnslib.dns import DNSError
-
-
-
-def make_response(data):
-    '''
-    回应DNS请求
-    '''
-    request = DNSRecord.parse(data)
-    qname = request.q.qname
-    qtype = request.q.qtype
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-    if qtype == QTYPE.A:
-        reply.add_answer(RR(qname, qtype, rdata=A('1.2.3.4')))
-    elif qtype == QTYPE.TXT:
-        reply.add_answer(RR(qname, qtype, rdata=TXT('TXT RECORE1')))
-    elif qtype == QTYPE.MX:
-        reply.add_answer(RR(qname, qtype, rdata=MX('1.2.3.4')))
-    else:
-        reply.add_answer(RR(qname, QTYPE.CNAME, rdata=CNAME('CNAME RECORE')))
-    return reply.pack()
-
-def decode_dns_question(data: bytes)->list:
-    '''
-    解析dns请求
-    '''
-    _idx = 12
-    _len = data[_idx]
-    _name = []
-    while _len != 0:
-        _idx += 1
-        _name.append(data[_idx:_idx+_len])
-        _idx += _len
-        _len = data[_idx]
-    return _name
-
-def make_txt_response(data, txt_record):
-    '''
-    返回TXT记录，用于登录
-    '''
-    request = DNSRecord.parse(data)
-    # print('REQUEST:\n', request)
-    qname = request.q.qname
-    qtype = request.q.qtype
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-    reply.add_answer(RR(qname, qtype, rdata=TXT(txt_record)))
-    return reply.pack()
-
-def put_bytes_into_txtrecord(data, bytes_record):
-    '''
-    将字节流记录到TXT记录
-    '''
-    request = DNSRecord.parse(data)
-    # print('REQUEST:\n', request)
-    qname = request.q.qname
-    qtype = request.q.qtype
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-    reply.add_answer(RR(qname, qtype, rdata=TXT(bytes_record)))
-    return reply.pack()
-
-def txt_from_dns_response(response):
-    '''
-    从DNS响应获取TXT记录
-    TODO:
-    - 支持多条记录
-    - 不使用第三方库
-    '''
-    try:
-        response = str(DNSRecord().parse(response))
-        txt_records = re.findall(r'.*TXT.*\"(.*)\".*', response)
-        return txt_records
-    except DNSError:
-        print('DNSError while parsing TXT record')
-    return ''
+                    QTYPE, RR, TXT)
 
 # DNSQuestion:https://juejin.im/post/5ab719c151882577b45ef9d9
 
@@ -202,33 +127,3 @@ class Decapsulator:
         rdata = answer[12:]
         # print(r_type, r_class, r_ttl, r_dlength)
         return rdata[1:rdata[0]+1]
-
-if __name__ == '__main__':
-    # Client
-    DATA = b'\xe2\x80\x85\x80\x00\x01\x00\x01\x00\x00\x00\x00$779ea091-ad7d-43bf-8afc-8b94fdb576bf\x05LOGIN\x03www\x04ibbb\x03top\x00\x00\x10\x00\x01\xc0\x0c\x00\x10\x00\x01\x00\x00\x00\x00\x00762752af9e-2306-11ea-9320-00163e0cae2e;10.0.0.2;10.0.0.1'
-    print(len('2752af9e-2306-11ea-9320-00163e0cae2e;10.0.0.2;10.0.0.1'))
-    print(Decapsulator.get_txt_record(DATA))
-    # Server
-    from socket import socket, AF_INET, SOCK_DGRAM
-    import os
-    # os.popen('systemctl stop systemd-resolved').read()
-    DATA = b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-    DATA = b'\x00\x00\x08\x00E\x00\x00T\xab\xa9\x00\x00@\x01\xba\xfd\n\x00\x00\x01\n\x00\x00\x02\x00\x00\x01\x1a^K\x01\xb3rx\xfc]\x00\x00\x00\x00g>\n\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567'
-    import uuid
-    DATA = str(uuid.uuid1()).encode()
-    print(DATA)
-    print(len(DATA))
-    try:
-        while True:
-            SOCKET = socket(AF_INET, SOCK_DGRAM)
-            SOCKET.bind(('0.0.0.0', 53))
-            REQUEST, ADDR = SOCKET.recvfrom(1024)
-            RESPONSE = Encapsulator.response_bytes_in_txt(REQUEST, DATA)
-            # RESPONSE = Encapsulator.response_str_in_txt(REQUEST, b'TXT_RECORD')
-            print(RESPONSE)
-            # Decapsulator.get_host_name(RESPONSE)
-            SOCKET.sendto(RESPONSE, ADDR)
-    except (KeyboardInterrupt):
-        # os.popen('systemctl start systemd-resolved').read()
-        pass
-

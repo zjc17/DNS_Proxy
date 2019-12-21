@@ -15,7 +15,6 @@ from threading import Thread
 from fcntl import ioctl
 from select import select
 from core.dns_handler import Decapsulator, Encapsulator
-from core.packet import IPPacket
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
