@@ -18,14 +18,11 @@ class Encapsulator:
         将字符串包装在TXT记录里作为结果返回
         return: bytes
         '''
-        print('\n======================================\n')
         request = DNSRecord.parse(request)
-        print('REQUEST:\n', request)
         qname = request.q.qname
         qtype = request.q.qtype
         reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
         reply.add_answer(RR(qname, qtype, rdata=TXT(data)))
-        print('RESPONSE:\n', reply)
         return reply.pack()
 
     @staticmethod
@@ -98,7 +95,6 @@ class Decapsulator:
         _idx = 0
         while packet[_idx] > 0:
             _idx += 1
-            print(_idx, packet[_idx: packet[_idx-1]+_idx])
             q_name.append(packet[_idx: packet[_idx-1]+_idx])
             _idx += packet[_idx-1]
         return q_name
@@ -120,7 +116,7 @@ class Decapsulator:
         _q_type, _q_class = struct.unpack('>HH', packet[_idx+1: _idx+5])
         answer = packet[_idx+5:]
         _r_name = packet[:2]
-        if len(packet) < 10:
+        if len(answer) < 10:
             # TODO: 基于包结构验证
             return b''
         _r_type, _r_class, _r_ttl, _r_dlength = struct.unpack('>HHIH', answer[2: 12])

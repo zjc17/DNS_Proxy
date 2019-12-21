@@ -9,12 +9,11 @@ import logging
 import time
 import os
 import socket
-import struct
 import uuid as UUID_GENERATOR
 from threading import Thread
-from fcntl import ioctl
 from select import select
 from core.dns_handler import Decapsulator, Encapsulator
+from core.sys_manage import TunManager
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
@@ -36,23 +35,7 @@ UP_MSG = b'UP'          # 用户上行数据 SESSION_UUID.UP.$BYTE_DATA.hostname
 CLOSED_SESSION_MSG = b'CLOSED_SESSION_MSG'
 MAX_KEEP_ASK = 1
 
-def create_tunnel(tun_name='tun%d', tun_mode=IFF_TUN):
-    '''
-    创建隧道
-    '''
-    tunfd = os.open("/dev/net/tun", os.O_RDWR)
-    ifn = ioctl(tunfd, TUNSETIFF, struct.pack(
-        b"16sH", tun_name.encode(), tun_mode))
-    tun_name = ifn[:16].decode().strip("\x00")
-    return tunfd, tun_name
 
-
-def start_tunnel(tun_name, local_ip, peer_ip):
-    '''
-    配置隧道并启动
-    '''
-    os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
-             (tun_name, local_ip, peer_ip, MTU)).read()
 
 class SessionExpiredException(Exception):
     '''
@@ -73,7 +56,7 @@ class Client():
         '''
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.__socket.settimeout(5)
-        self.__init_local_ip()
+        self.init_local_ip()
         self.s_uuid = None # UUID for session
         self.readables = [self.__socket]
         self.tun_fd = None
@@ -81,7 +64,7 @@ class Client():
         self.keep_ask = MAX_KEEP_ASK
 
 
-    def __init_local_ip(self):
+    def init_local_ip(self):
         '''
         获取本机ip
         '''
@@ -131,9 +114,8 @@ class Client():
             try:
                 if self.__decode_login_msg(response):
                     break
-                else:
-                    self.__socket.sendto(request, DOMAIN_NS_ADDR)
-                    logging.info('Send data in DNS request')
+                self.__socket.sendto(request, DOMAIN_NS_ADDR)
+                logging.info('Send data in DNS request')
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
                 self.__socket.sendto(request, DOMAIN_NS_ADDR)
@@ -190,7 +172,7 @@ class Client():
             logging.error('Wrong Login response: %s', txt_record)
             time.sleep(1)
             return False
-        self.tun_fd, tun_name = create_tunnel()
+        self.tun_fd, tun_name = TunManager.create_tunnel()
         self.readables.append(self.tun_fd)
         _login_response = txt_record.split(';')
         if len(_login_response) != 3:
@@ -198,7 +180,7 @@ class Client():
             return False
         self.s_uuid, local_ip, peer_ip = _login_response
         logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
-        start_tunnel(tun_name, local_ip, peer_ip)
+        TunManager.start_tunnel(tun_name, local_ip, peer_ip, MTU)
         logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
         return True
 
