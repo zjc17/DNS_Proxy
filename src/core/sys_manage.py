@@ -35,11 +35,11 @@ class TunManager:
         根据文件修饰符关闭Tun
         '''
         os.close(tun_fd)
-    
+
     @staticmethod
     def start_tunnel(tun_name, local_ip, peer_ip, mtu):
         '''
         配置隧道并启动
         '''
-        os.popen('ifconfig %s %s dstaddr %s mtu %s up' %
+        os.popen('ifconfig %s %s dstaddr %s mtu %s up' %\
                 (tun_name, local_ip, peer_ip, mtu)).read()

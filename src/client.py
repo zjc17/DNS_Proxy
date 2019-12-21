@@ -104,23 +104,21 @@ class Client():
         连接服务端并配置代理隧道\n
         创建Tunfd\n
         用户登录消息 USER_UUID.LOGIN.hostname.domain
+        持续登录，失败后等待3秒，知道登录为止
         '''
         request = Encapsulator.make_fake_request(UUID, LOGIN_MSG, HOST_NAME)
-        # TODO: handle timeout Exception
-        self.__socket.sendto(request, DOMAIN_NS_ADDR)
-        logging.info('Send data in DNS request')
-        response, _addr = self.__socket.recvfrom(2048)
         while True:
+            self.__socket.sendto(request, DOMAIN_NS_ADDR)
+            logging.info('Send data in DNS request')
+            response, _addr = self.__socket.recvfrom(2048)
             try:
                 if self.__decode_login_msg(response):
                     break
-                self.__socket.sendto(request, DOMAIN_NS_ADDR)
-                logging.info('Send data in DNS request')
             except AssertionError:
                 logging.info('Server Down or Not Detected Login Message')
-                self.__socket.sendto(request, DOMAIN_NS_ADDR)
-                time.sleep(1)
                 continue
+            logging.info('Login Failed, Try later')
+            time.sleep(3)
         logging.info('Connect to server successful')
 
     def __request_up_msg(self, data: bytes):
@@ -202,8 +200,8 @@ class Client():
                 # - 删除旧的文件描述符
                 os.close(self.readables[1])
                 self.readables = [self.__socket]
-                self.__handle_login()
-            elif bytes_write is not None and len(bytes_write) > 20:
+                raise SessionExpiredException
+            if bytes_write is not None and len(bytes_write) > 20:
                 # Check if IPPacket
                 # logging.info(IPPacket.str_info(bytes_write))
                 logging.debug('Write data into TUN')
