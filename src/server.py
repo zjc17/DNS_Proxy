@@ -5,14 +5,11 @@
 from socket import socket, AF_INET, SOCK_DGRAM
 from select import select
 import os
-import logging
 from dnslib.dns import DNSError
 from core.dns_handler import Encapsulator, Decapsulator
 from core.session import SessionManager, LOCAL_IP
-# TODO 优化logging模块的使用 https://juejin.im/post/5d3c82ab6fb9a07efb69cd02)
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
-                    datefmt='%H:%M:%S')
+from core.logger import logging, create_logger
+COLOR_LOG = create_logger(__name__, logging.DEBUG)
 BIND_ADDRESS = '0.0.0.0', 53
 BUFFER_SIZE = 4096
 LOGIN_MSG = b'LOGIN'    # 用户登录消息 USER_UUID.LOGIN.hostname.domain
@@ -49,10 +46,10 @@ class Server:
         assert data[1] == DOWN_MSG
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
         if session is False:
-            logging.error('Invalid Tun ID')
+            COLOR_LOG.error('Invalid Tun ID')
             return False
         if session is True:
-            logging.debug('客户端过期，提示重新登录')
+            COLOR_LOG.debug('客户端过期，提示重新登录')
             packet = CLOSED_SESSION_MSG
         else:
             packet = session.get_buffer_data()
@@ -61,10 +58,10 @@ class Server:
             # TODO: check whether is IP packet
             packet = b''
         reply = Encapsulator.response_bytes_in_txt(request, packet)
-        logging.debug('REPLY:')
-        logging.debug(reply)
+        COLOR_LOG.debug('REPLY:')
+        COLOR_LOG.debug(reply)
         self.__socket.sendto(reply, addr)
-        logging.info('SEND BACK %s', packet[:10])
+        COLOR_LOG.info('SEND BACK %s', packet[:10])
         return True
 
     def __response_login_msg(self, request: bytes, data: list, addr: tuple)->bool:
@@ -82,19 +79,19 @@ class Server:
         assert data[1] == LOGIN_MSG
         session = SESSION_MANAGER.create_session(data[0].decode())
         if session is None:
-            logging.info('Invalid User Login Detected')
+            COLOR_LOG.info('Invalid User Login Detected')
             return False
-        logging.info('Clinet <%s> connect successful', session.uuid)
+        COLOR_LOG.info('Clinet <%s> connect successful', session.uuid)
         try:
-            logging.error(session.uuid)
+            COLOR_LOG.error(session.uuid)
             txt_record = '%s;%s;%s'%(session.uuid, session.tun_addr, LOCAL_IP)
             reply = Encapsulator.response_str_in_txt(request, txt_record)
-            logging.error(reply)
+            COLOR_LOG.error(reply)
             self.__socket.sendto(reply, addr)
             SESSION_MANAGER.readables.append(session.tun_fd)
         except DNSError:
-            logging.info('Fail To Set Up Tunnel')
-            logging.debug('Login DNS Message Parsing error')
+            COLOR_LOG.info('Fail To Set Up Tunnel')
+            COLOR_LOG.debug('Login DNS Message Parsing error')
         return True
 
     @staticmethod
@@ -111,19 +108,19 @@ class Server:
         session = SESSION_MANAGER.get_session_from_uuid(data[0].decode())
         if session is False:
             # TODO: 向用户回传消息，通知session uuid不合法
-            logging.info('Invalid Session <%s>', data[0].decode())
+            COLOR_LOG.info('Invalid Session <%s>', data[0].decode())
             return False
         if session is True:
-            logging.debug('客户端过期，上行数据请求无法回复')
+            COLOR_LOG.debug('客户端过期，上行数据请求无法回复')
             return False
         tun_fd = session.tun_fd
         # TODO: 将-3参数化
         message = b''.join(data[3:-3])
         try:
-            logging.info('Try to send DATA(%d) to TUN', (len(message)))
+            COLOR_LOG.info('Try to send DATA(%d) to TUN', (len(message)))
             os.write(tun_fd, message)
         except OSError:
-            logging.error('Fail to write DATA to TUN')
+            COLOR_LOG.error('Fail to write DATA to TUN')
             return False
         return True
 
@@ -136,7 +133,7 @@ class Server:
         if unique_id in self.__duplicate_detected:
             return True
         self.__duplicate_detected.append(unique_id)
-        logging.info('len = %d', len(self.__duplicate_detected))
+        COLOR_LOG.info('len = %d', len(self.__duplicate_detected))
         return False
 
     def __drop_duplicate_request(self, unique_id: bytes):
@@ -148,7 +145,7 @@ class Server:
         if unique_id in self.__duplicate_detected:
             return True
         self.__duplicate_detected.append(unique_id)
-        logging.info('len = %d', len(self.__duplicate_detected))
+        COLOR_LOG.info('len = %d', len(self.__duplicate_detected))
         return False
 
     def __handle_dns_request(self, request: bytes, addr):
@@ -160,7 +157,7 @@ class Server:
         name_data = Decapsulator.get_host_name(request)
         uuid = name_data[0].decode()
         try:
-            logging.info('s_uuid<%s>=>\n%s', uuid, name_data[1].decode())
+            COLOR_LOG.info('s_uuid<%s>=>\n%s', uuid, name_data[1].decode())
             # 相关预定义指令
             if name_data[1] == LOGIN_MSG:   # b'LOGIN':
                 self.__response_login_msg(request, name_data, addr)
@@ -169,14 +166,14 @@ class Server:
                 self.__response_down_msg(request, name_data, addr)
                 return
             if name_data[1] == UP_MSG:      # b'UP'
-                logging.info('UP UNIQUE ID = %s', name_data[2].decode())
+                COLOR_LOG.info('UP UNIQUE ID = %s', name_data[2].decode())
                 if self.__drop_duplicate_request(name_data[2]):
-                    logging.debug('DUPLICATE PACKET RECEIVED AND DROPPED')
+                    COLOR_LOG.debug('DUPLICATE PACKET RECEIVED AND DROPPED')
                     return
                 self.response_up_msg(name_data, addr)
                 return
         except IndexError:
-            logging.error('Invalid DNS Query or Not a Fake DNS %s', name_data)
+            COLOR_LOG.error('Invalid DNS Query or Not a Fake DNS %s', name_data)
 
     def run_forever(self):
         '''
@@ -187,7 +184,7 @@ class Server:
                 readab = select(SESSION_MANAGER.readables, [], [], 1)[0]
             except OSError:
                 # detected the closed fd
-                logging.debug('Closed fd Detected')
+                COLOR_LOG.debug('Closed fd Detected')
                 raise OSError
             for tun_id in readab:
                 if tun_id == self.__socket:
@@ -197,13 +194,13 @@ class Server:
                     continue
                 # inbound data from tun
                 data = os.read(tun_id, BUFFER_SIZE)
-                logging.debug('GET DATA from Tun, sending to buffer')
+                COLOR_LOG.debug('GET DATA from Tun, sending to buffer')
                 session = SESSION_MANAGER.get_session_from_tun_fd(tun_id)
                 if session is None:
-                    logging.error('Invalid Tun ID')
+                    COLOR_LOG.error('Invalid Tun ID')
                     continue
                 session.put_buffer_data(data)
-                logging.debug('To %s', session.tun_name)
+                COLOR_LOG.debug('To %s', session.tun_name)
 
 if __name__ == '__main__':
     SERVER = Server()

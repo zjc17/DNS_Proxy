@@ -3,14 +3,13 @@
 '''
 import time
 import os
-import logging
 from ipaddress import ip_network
 import uuid as UUID_GENERATOR
 from threading import Thread
 from core.sys_manage import TunManager
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
-                    datefmt='%H:%M:%S')
+from core.logger import logging, create_logger
+COLOR_LOG = create_logger(__name__, logging.DEBUG)
+
 NETWORK = '10.0.0.0/24'
 IPRANGE = list(map(str, ip_network(NETWORK)))[1:]
 LOCAL_IP = IPRANGE.pop(0)
@@ -112,7 +111,7 @@ class SessionManager:
         assert _count < 2
         # TODO: code ABOVE is for checking, remove to imporve the performance
         for session in self.__session_pool:
-            logging.debug(session.uuid)
+            COLOR_LOG.debug(session.uuid)
             if session.uuid == uuid:
                 # fresh the session
                 session.fresh_session()
@@ -151,7 +150,7 @@ class SessionManager:
         TunManager.start_tunnel(tun_name, LOCAL_IP, tun_addr, MTU)
         new_session = Session(tun_fd, tun_addr, tun_name)
         self.__session_pool.append(new_session)
-        logging.error(new_session.uuid)
+        COLOR_LOG.error(new_session.uuid)
         return new_session
 
     def __del_expired_session(self):
@@ -170,7 +169,7 @@ class SessionManager:
                         os.close(session.tun_fd)
                         IPRANGE.insert(0, session.tun_addr)
                         self.__session_pool.remove(session)
-                        logging.info('Delete Time Out Session <%s>', session.uuid)
+                        COLOR_LOG.info('Delete Time Out Session <%s>', session.uuid)
         c_t_1 = Thread(target=_del_expired_session, args=(), name='del_expired_session')
         c_t_1.setDaemon(True)
         c_t_1.start()

@@ -5,7 +5,6 @@
     - 监听数据
     - 修改数据包
 '''
-import logging
 import time
 import os
 import socket
@@ -14,10 +13,8 @@ from threading import Thread
 from select import select
 from core.dns_handler import Decapsulator, Encapsulator
 from core.sys_manage import TunManager
-
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(filename)s[:%(lineno)d] %(levelname)s %(message)s',
-                    datefmt='%H:%M:%S')
+from core.logger import logging, create_logger
+COLOR_LOG = create_logger(__name__, logging.DEBUG)
 
 UUID = '779ea091-ad7d-43bf-8afc-8b94fdb576bf'
 MTU = 180
@@ -71,7 +68,7 @@ class Client():
         _socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _socket.connect(('8.8.8.8', 80))
         self.local_ip = _socket.getsockname()[0]
-        logging.info('Local IP: %s', self.local_ip)
+        COLOR_LOG.info('Local IP: %s', self.local_ip)
         _socket.close()
 
     def __keep_alive(self):
@@ -109,17 +106,17 @@ class Client():
         request = Encapsulator.make_fake_request(UUID, LOGIN_MSG, HOST_NAME)
         while True:
             self.__socket.sendto(request, DOMAIN_NS_ADDR)
-            logging.info('Send data in DNS request')
+            COLOR_LOG.info('Send data in DNS request')
             response, _addr = self.__socket.recvfrom(2048)
             try:
                 if self.__decode_login_msg(response):
                     break
             except AssertionError:
-                logging.info('Server Down or Not Detected Login Message')
+                COLOR_LOG.info('Server Down or Not Detected Login Message')
                 continue
-            logging.info('Login Failed, Try later')
+            COLOR_LOG.info('Login Failed, Try later')
             time.sleep(3)
-        logging.info('Connect to server successful')
+        COLOR_LOG.info('Connect to server successful')
 
     def __request_up_msg(self, data: bytes):
         '''
@@ -128,8 +125,8 @@ class Client():
         s_uuid = self.s_uuid+'.UP.'+ str(UUID_GENERATOR.uuid1())[:8]
         request = Encapsulator.make_fake_request(s_uuid, data, HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
-        logging.info('Send data in DNS request')
-        logging.debug(request)
+        COLOR_LOG.info('Send data in DNS request')
+        COLOR_LOG.debug(request)
         self.__keep_ask(True)
 
     def __request_down_msg(self):
@@ -141,8 +138,8 @@ class Client():
         r_uuid = str(UUID_GENERATOR.uuid1())
         request = Encapsulator.make_fake_request(d_uuid, r_uuid.encode(), HOST_NAME)
         self.__socket.sendto(request, DOMAIN_NS_ADDR)
-        logging.info('Send DOWN MSG in DNS request %s', r_uuid)
-        logging.info(request)
+        COLOR_LOG.info('Send DOWN MSG in DNS request %s', r_uuid)
+        COLOR_LOG.info(request)
 
     @staticmethod
     def __decode_down_msg(response):
@@ -151,7 +148,7 @@ class Client():
         '''
         rdata = Decapsulator.get_txt_record(response)
         if len(rdata) < 1:
-            logging.debug('No TXT record in response')
+            COLOR_LOG.debug('No TXT record in response')
             return b''
         return rdata
 
@@ -161,25 +158,26 @@ class Client():
         '''
         name_data = Decapsulator.get_host_name(response)
         if name_data[1] != LOGIN_MSG:
-            logging.debug('Not a Login response <%s>', name_data[1])
+            COLOR_LOG.debug('Not a Login response <%s>', name_data[1])
             return False
         try:
             txt_record = Decapsulator.get_txt_record(response)
             txt_record = txt_record.decode()
         except UnicodeDecodeError:
-            logging.error('Wrong Login response: %s', txt_record)
+            COLOR_LOG.error('Wrong Login response: %s', txt_record)
             time.sleep(1)
             return False
         self.tun_fd, tun_name = TunManager.create_tunnel()
         self.readables.append(self.tun_fd)
         _login_response = txt_record.split(';')
         if len(_login_response) != 3:
-            logging.debug('Not a Login response <%s>', txt_record)
+            COLOR_LOG.debug('Not a Login response <%s>', txt_record)
             return False
         self.s_uuid, local_ip, peer_ip = _login_response
-        logging.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s', self.s_uuid, local_ip, peer_ip)
+        COLOR_LOG.info('Session UUID: %s \tLocal ip: %s\tPeer ip: %s',\
+                        self.s_uuid, local_ip, peer_ip)
         TunManager.start_tunnel(tun_name, local_ip, peer_ip, MTU)
-        logging.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
+        COLOR_LOG.info('Create Tun Successfully! Tun ID = %d', self.tun_fd)
         return True
 
     def __handle_dns_response(self, response):
@@ -188,24 +186,24 @@ class Client():
         '''
         name_data = Decapsulator.get_host_name(response)
         if name_data[1] == LOGIN_MSG:   # b'LOGIN':
-            logging.error('Ignore Server Response: Already Login')
+            COLOR_LOG.error('Ignore Server Response: Already Login')
             return
         if name_data[1] == DOWN_MSG:    # b'DOWN':
-            logging.debug('Receive Packet from server %s', name_data[2][:8])
+            COLOR_LOG.debug('Receive Packet from server %s', name_data[2][:8])
             bytes_write = self.__decode_down_msg(response)
             if bytes_write == CLOSED_SESSION_MSG:
                 # 重新登录
                 # - 关闭旧的session, 原地发起登录请求
-                logging.info('客户端掉线，重新登录')
+                COLOR_LOG.info('客户端掉线，重新登录')
                 # - 删除旧的文件描述符
                 os.close(self.readables[1])
                 self.readables = [self.__socket]
                 raise SessionExpiredException
             if bytes_write is not None and len(bytes_write) > 20:
                 # Check if IPPacket
-                # logging.info(IPPacket.str_info(bytes_write))
-                logging.debug('Write data into TUN')
-                logging.info(bytes_write)
+                # COLOR_LOG.info(IPPacket.str_info(bytes_write))
+                COLOR_LOG.debug('Write data into TUN')
+                COLOR_LOG.info(bytes_write)
                 os.write(self.tun_fd, bytes_write)
                 # 收到数据包后+1
                 self.__keep_ask(True)
@@ -214,7 +212,7 @@ class Client():
                 self.__keep_ask(False)
             return
         if name_data[1] == UP_MSG:      # b'UP'
-            logging.debug('Server Response Invalid Question')
+            COLOR_LOG.debug('Server Response Invalid Question')
             return
 
     def __handle_forwarding(self):
@@ -230,25 +228,25 @@ class Client():
                 else:
                     # 将从Tun拿到的IP包发送给代理服务器
                     ip_packet = os.read(self.tun_fd, BUFFER_SIZE)
-                    logging.debug('Get outbounding data from TUN')
+                    COLOR_LOG.debug('Get outbounding data from TUN')
                     self.__request_up_msg(ip_packet)
             # 发送心跳包，尝试接受数据
-            logging.debug('keep_ask = [%d]', self.keep_ask)
+            COLOR_LOG.debug('keep_ask = [%d]', self.keep_ask)
             if self.keep_ask > 0:
-                logging.info('Try To Receive Data [%d]', self.keep_ask)
+                COLOR_LOG.info('Try To Receive Data [%d]', self.keep_ask)
                 self.__request_down_msg()
 
     def run_forever(self):
         '''
         运行代理客户端
         '''
-        logging.info('Start connect to server...')
+        COLOR_LOG.info('Start connect to server...')
         self.__handle_login()
         while True:
             try:
                 self.__handle_forwarding()
             except SessionExpiredException:
-                logging.error('SessionExpiredException')
+                COLOR_LOG.error('SessionExpiredException')
                 self.__handle_login()
                 continue
             except KeyboardInterrupt:
@@ -264,4 +262,4 @@ if __name__ == '__main__':
     try:
         Client().run_forever()
     except KeyboardInterrupt:
-        logging.info('Closing vpn client ...')
+        COLOR_LOG.info('Closing vpn client ...')
