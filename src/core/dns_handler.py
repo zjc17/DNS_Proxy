@@ -133,9 +133,9 @@ class Encapsulator:
             data_segments.append(data[_idx: _idx+length])
             _idx += length
         return data_segments
-    
+
     @staticmethod
-    def make_fake_request(uuid: str, data, host_name):
+    def make_fake_request(_uuid: str, data, host_name):
         '''
         进行伪装查询
         0        12     49
@@ -144,9 +144,9 @@ class Encapsulator:
         assert len(data) <= 63*3
         data_segments = Encapsulator.__split_with_length(data, 63)
         request_msg = DNSRecord()
-        request_msg.add_question(DNSQuestion(uuid+'.'+host_name, QTYPE.TXT))
+        request_msg.add_question(DNSQuestion(_uuid+'.'+host_name, QTYPE.TXT))
         request_data = request_msg.pack()
-        _idx = 13 + len(uuid)
+        _idx = 13 + len(_uuid)
         modified_data = request_data[:_idx]
         for data_seg in data_segments:
             data_len = struct.pack('>B', len(data_seg))

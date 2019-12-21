@@ -14,7 +14,6 @@ import uuid as UUID_GENERATOR
 from threading import Thread
 from fcntl import ioctl
 from select import select
-from core import dns_handler
 from core.dns_handler import Decapsulator, Encapsulator
 from core.packet import IPPacket
 
@@ -181,7 +180,7 @@ class Client():
         '''
         解析用户登录响应
         '''
-        name_data = dns_handler.decode_dns_question(response)
+        name_data = Decapsulator.get_host_name(response)
         if name_data[1] != LOGIN_MSG:
             logging.debug('Not a Login response <%s>', name_data[1])
             return False
@@ -208,7 +207,7 @@ class Client():
         '''
         处理UDP客户端接受的
         '''
-        name_data = dns_handler.decode_dns_question(response)
+        name_data = Decapsulator.get_host_name(response)
         if name_data[1] == LOGIN_MSG:   # b'LOGIN':
             logging.error('Ignore Server Response: Already Login')
             return
