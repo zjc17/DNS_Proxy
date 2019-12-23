@@ -1,20 +1,80 @@
 # DNS_Proxy
 
+EN|[CN](./READNE.md)
+
+## 简介
+
+DNS_Proxy 是一个帮助构建私有计算机网络的网络工具。提供基于DNS的流量伪装，并结合基于ssh的sosck5代理能够对流量进行加密，保护隐私。
+
+![Upstreaming packet flow](./pic/packet_flow.png)
+
 ## 如何使用
+
+1. 克隆本仓库: `git clone https://github.com/Jiachen-Zhang/DNS_Proxy.git`
+
+2. 安装依赖: `pip3 install dnslib`
+
+3. 配置并解析域名（略）
+
+4. 检测域名配置: `python3 test/test_dns_config.py` (update later)
+
+4. 启动服务: 
+    
+    - 客户端: `sudo python3 src/client.py`
+
+    - 服务端: `sudo python3 src/server.py`
+
+5. 可选: 
+
+    - 配置自定义用户认证：
+
+        - 将 `src/client.py` 的 `UUID` 加入 `src/core/session.py` 的 `USER_UUID` 中即可
+
+    - 自定义日志(release later)
+
+6. 配置代理
+
+    - `socks5`:
+        
+        - 启动服务端与客户端
+
+        - 客户端: `ssh -D 127.0.0.1:8080 <username>@10.0.0.1`
+
+        - 登录成功后即在本地开启地址为 `127.0.0.1:8080` 的 `socks5` 服务器
+    
+    - `NAT` (需要`sudo`权限，部分机型可能不支持并有可能造成服务器网络故障)
+        
+        > 这部分内容将在未来的发布中集成在 `config` 文件中，不需要手动设置
+
+        - 客户端：
+
+            - 查找默认网关：`route -n`
+
+            - 添加服务器地址为网关: `route add -host 120.78.166.34 gw *.*.*.*` (120.78.166.34: NS IP)
+
+            - 添加默认网关: `route add default gw 10.0.0.1`
+    
+        - 服务端:
+
+            - 开启转发: `sysctl net.ipv4.ip_forward=1`
+
+            - 设置`NAT`: `iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -j SNAT --to 18.162.51.192` (18.162.51.192: Server IP)
+
+## 如何开发
 
 克隆本仓库后
 
-1. 创建虚拟环境 `python3 -m venv venv`
+1. 创建虚拟环境: `python3 -m venv venv`
 
-2. 进入虚拟环境 `source venv/bin/activate`
+2. 进入虚拟环境: `source venv/bin/activate`
 
-2. 安装依赖 `pip install -r requirements.txt` 
+2. 安装依赖: `pip install -r requirements.txt` 
 
-3. 添加环境变量 `python setup.py`
+3. 添加环境变量: `python setup.py`
 
-4. 解析域名 `dig @120.78.166.34 group11.cs305.fun`
+4. 检测域名解析: `dig @120.78.166.34 group11.cs305.fun`
 
-其他说明
+## 其他说明
 
 1. 由于 TUN 接口需要管理员权限，因此建议在开发前（进入虚拟环境前），使用 `sudo -s` 提升权限。
 
@@ -44,25 +104,8 @@
 
     - 启动: `sudo systemctl start systemd-resolved`
 
-6. 配置网卡转发:
 
-    1. 查看NAT转发: `sudo iptables -L -n -t nat`
-
-    2. 添加NAT转发:
-
-        - TODO: ...
-
-    3. 删除转发: 
-        
-        - `sudo iptables -t nat -D PREROUTING 1`
-
-        - `sudo iptables -t nat -D POSTROUTING 1`
-
-        - `sudo iptables -D FORWARD 1`
-
-7. 配置`Socks5`代理: `ssh -D 127.0.0.1:8080 jiachen@10.0.0.1`
-
-工具
+## 工具
 
 1. 网络抓包: `tshark`: [Reference](https://kaimingwan.com/post/ji-chu-zhi-shi/wang-luo/shi-yong-tsharkzai-ming-ling-xing-jin-xing-wang-luo-zhua-bao)
 
@@ -76,3 +119,19 @@
 4. User Datagram Protocol: [RF768](https://tools.ietf.org/html/rfc768)
 
 5. SOCKS Protocol Version 5: [RCF1928](https://tools.ietf.org/html/rfc1928)
+
+## License
+
+[The MIT License (MIT)](./LICENSE)
+
+## Credits
+
+本项目目前使用以下第三方库
+
+- 生产
+
+    - `pytest`
+
+- 发布
+
+    - `dnslib`
