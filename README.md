@@ -49,7 +49,16 @@
     1. 查看NAT转发: `sudo iptables -L -n -t nat`
 
     2. 添加NAT转发:
+        - 把发往地址 `1.2.3.4` 的ip包转发到ip地址 `10.0.0.1` 的 `8180` 端口
+            
+            - `sudo iptables -t nat -A PREROUTING -d 1.2.3.4 -p tcp -m tcp  -j DNAT --to-destination 10.0.0.1:8180`
 
+            - `sudo iptables -t nat -A POSTROUTING -s 10.0.0.1/24 -d 10.0.0.1 -p tcp -m tcp -j SNAT --to-source 10.0.0.2`
+        
+        - 服务端: `sudo iptables -t nat -A POSTROUTING -s <clint_addr> -j SNAT --to <eth0_addr>` 
+
+        - 客户端: `sudo iptables -t nat -A PREROUTING -s <服务端外网IP> -j SNAT --to <服务端内网ip>`
+`
         - TODO: ...
 
     3. 删除转发: 
@@ -61,6 +70,8 @@
         - `sudo iptables -D FORWARD 1`
 
 7. 配置`Socks5`代理: `ssh -D 127.0.0.1:8080 jiachen@10.0.0.1`
+
+8. 查看IP: `curl https://pv.sohu.com/cityjson  --socks5 127.0.0.1:8080`
 
 工具
 
