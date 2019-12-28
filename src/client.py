@@ -22,7 +22,7 @@ BUFFER_SIZE = 4096
 KEEPALIVE = 10
 DOMAIN_NS_IP = '120.78.166.34'
 HOST_NAME = 'group11.cs305.fun'
-# HOST_NAME = 'www.ibbb.top'
+HOST_NAME = 'www.ibbb.top'
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_TAP = 0x0002
@@ -57,7 +57,7 @@ class Client():
         self.s_uuid = None # UUID for session
         self.readables = [self.__socket]
         self.tun_fd = None
-        # self.__keep_alive()
+        self.__keep_alive()
         self.keep_ask = MAX_KEEP_ASK
 
 
@@ -230,11 +230,11 @@ class Client():
                     ip_packet = os.read(self.tun_fd, BUFFER_SIZE)
                     COLOR_LOG.debug('Get outbounding data from TUN')
                     self.__request_up_msg(ip_packet)
-            # 发送心跳包，尝试接受数据
-            COLOR_LOG.debug('keep_ask = [%d]', self.keep_ask)
-            if self.keep_ask > 0:
-                COLOR_LOG.info('Try To Receive Data [%d]', self.keep_ask)
-                self.__request_down_msg()
+                    # 发送心跳包，尝试接受数据
+                    COLOR_LOG.debug('keep_ask = [%d]', self.keep_ask)
+                    if self.keep_ask > 0:
+                        COLOR_LOG.info('Try To Receive Data [%d]', self.keep_ask)
+                        self.__request_down_msg()
 
     def run_forever(self):
         '''
@@ -258,7 +258,7 @@ if __name__ == '__main__':
     # DOMAIN_NS_ADDR = ('8.8.8.8', 53)
     DOMAIN_NS_ADDR = ('18.162.114.192', 53)
     # DOMAIN_NS_ADDR = ('18.162.51.192', 53) # 29 Kbps => 140kbps
-
+    DOMAIN_NS_ADDR = ('47.100.92.248', 53)
     try:
         Client().run_forever()
     except KeyboardInterrupt:
