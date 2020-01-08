@@ -1,4 +1,4 @@
-[![codebeat badge](https://codebeat.co/badges/a9ee193b-5436-450e-94e2-5646e1041684)](https://codebeat.co/a/jiachen/projects/github-com-jiachen-zhang-dns_proxy-master)
+[![codebeat badge](https://codebeat.co/badges/3e0b0df0-6454-4b55-870e-832a89658806)](https://codebeat.co/projects/github-com-jiachen-zhang-dns_proxy-master)
 
 # DNS_Proxy
 
