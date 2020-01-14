@@ -1,6 +1,6 @@
-[![codebeat badge](https://codebeat.co/badges/3e0b0df0-6454-4b55-870e-832a89658806)](https://codebeat.co/projects/github-com-jiachen-zhang-dns_proxy-master)
-
 # DNS_Proxy
+
+[![codebeat badge](https://codebeat.co/badges/3e0b0df0-6454-4b55-870e-832a89658806)](https://codebeat.co/projects/github-com-jiachen-zhang-dns_proxy-master)
 
 EN|[CN](./READNE.md)
 
